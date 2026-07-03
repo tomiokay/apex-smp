@@ -18,9 +18,9 @@ import org.bukkit.event.entity.ItemSpawnEvent;
 import org.bukkit.inventory.ItemStack;
 
 /**
- * The dragon egg is a legendary, indestructible item. As a dropped item it cannot
- * burn, be destroyed by lava or explosions, or despawn. If it falls into the void
- * it reappears on the End spawn platform and the whole server is told.
+ * The dragon egg is a legendary, indestructible item. As a dropped item it glows,
+ * cannot burn, be destroyed by lava or explosions, or despawn. If it falls into the
+ * void it reappears on the End spawn platform and the whole server is told.
  */
 public class DragonEggListener implements Listener {
 
@@ -48,6 +48,7 @@ public class DragonEggListener implements Listener {
             item.setInvulnerable(true);
             item.setUnlimitedLifetime(true);
             item.setWillAge(false);
+            item.setGlowing(true);
         }
     }
 
