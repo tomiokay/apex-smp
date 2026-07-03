@@ -12,6 +12,7 @@ import org.bukkit.Sound;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockState;
 import org.bukkit.entity.Entity;
+import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Wolf;
 import org.bukkit.potion.PotionEffect;
@@ -41,6 +42,7 @@ public class AbilityManager {
     private final Map<UUID, Long> cooldownUntil = new HashMap<>();
     private final Map<UUID, Long> lionBuffUntil = new HashMap<>();
     private final Set<UUID> noFallDamage = new HashSet<>();
+    private final Set<UUID> testMode = new HashSet<>();
 
     public AbilityManager(ApexPlugin plugin, StunManager stunManager) {
         this.plugin = plugin;
@@ -61,6 +63,29 @@ public class AbilityManager {
         return noFallDamage.remove(player.getUniqueId());
     }
 
+    /** Clears one player's ability cooldown. */
+    public void resetCooldown(Player player) {
+        cooldownUntil.remove(player.getUniqueId());
+    }
+
+    /** Clears every player's ability cooldown. */
+    public void resetAllCooldowns() {
+        cooldownUntil.clear();
+    }
+
+    public boolean isTestMode(Player player) {
+        return testMode.contains(player.getUniqueId());
+    }
+
+    /** Toggles test mode; returns the new state (true = now on). */
+    public boolean toggleTestMode(Player player) {
+        if (testMode.remove(player.getUniqueId())) {
+            return false;
+        }
+        testMode.add(player.getUniqueId());
+        return true;
+    }
+
     // ------------------------------------------------------------------
     // Dispatch
     // ------------------------------------------------------------------
@@ -72,7 +97,8 @@ public class AbilityManager {
             Msg.send(player, "<red>You have no apex yet. Wait for your roll!</red>");
             return;
         }
-        if (!data.isAbilityUnlocked()) {
+        boolean testing = isTestMode(player);
+        if (!testing && !data.isAbilityUnlocked()) {
             Msg.send(player, "<red>Your ability is locked.</red> <gray>Consume "
                     + plugin.getApexManager().tokensToUnlock() + " kill tokens to evolve ("
                     + data.getTokensConsumed() + "/" + plugin.getApexManager().tokensToUnlock() + ").</gray>");
@@ -84,7 +110,7 @@ public class AbilityManager {
         }
         long now = System.currentTimeMillis();
         Long readyAt = cooldownUntil.get(player.getUniqueId());
-        if (readyAt != null && now < readyAt) {
+        if (!testing && readyAt != null && now < readyAt) {
             Msg.send(player, "<red>Ability on cooldown:</red> <yellow>"
                     + ((readyAt - now) / 1000 + 1) + "s</yellow>");
             return;
@@ -104,37 +130,63 @@ public class AbilityManager {
         if (!success) {
             return;
         }
-        int cooldown = plugin.getConfig().getInt("ability-cooldown-seconds", 45);
-        cooldownUntil.put(player.getUniqueId(), now + cooldown * 1000L);
+        if (!testing) {
+            int cooldown = plugin.getConfig().getInt("ability-cooldown-seconds", 45);
+            cooldownUntil.put(player.getUniqueId(), now + cooldown * 1000L);
+        }
         plugin.getApexLogger().log(ApexLogger.LogType.ABILITY,
-                player.getName() + " used " + type.displayName() + " ability");
+                player.getName() + " used " + type.displayName() + " ability"
+                        + (testing ? " (test mode)" : ""));
     }
 
     // ------------------------------------------------------------------
     // Targeting helper
     // ------------------------------------------------------------------
 
-    private Player getTargetPlayer(Player caster, double range) {
+    /** The living entity the caster is looking at. Mobs count only in test mode. */
+    private LivingEntity getTarget(Player caster, double range) {
         Entity target = caster.getTargetEntity((int) range, false);
-        if (target instanceof Player hit && !hit.equals(caster)
-                && hit.getGameMode() != GameMode.SPECTATOR && hit.getGameMode() != GameMode.CREATIVE) {
-            return hit;
+        if (!(target instanceof LivingEntity hit) || hit.equals(caster)) {
+            return null;
         }
-        return null;
+        if (hit instanceof Player p) {
+            if (p.getGameMode() == GameMode.SPECTATOR || p.getGameMode() == GameMode.CREATIVE) {
+                return null;
+            }
+            return p;
+        }
+        return isTestMode(caster) ? hit : null;
     }
 
-    private List<Player> nearbyEnemies(Player caster, Location center, double radius) {
-        List<Player> result = new ArrayList<>();
+    /** All valid targets within radius. Mobs are included only in test mode. */
+    private List<LivingEntity> nearbyTargets(Player caster, Location center, double radius) {
+        List<LivingEntity> result = new ArrayList<>();
+        double rSq = radius * radius;
         for (Player other : center.getWorld().getPlayers()) {
             if (other.equals(caster) || other.getGameMode() == GameMode.SPECTATOR
                     || other.getGameMode() == GameMode.CREATIVE) {
                 continue;
             }
-            if (other.getLocation().distanceSquared(center) <= radius * radius) {
+            if (other.getLocation().distanceSquared(center) <= rSq) {
                 result.add(other);
             }
         }
+        if (isTestMode(caster)) {
+            for (Entity e : center.getWorld().getNearbyEntities(center, radius, radius, radius)) {
+                if (e instanceof LivingEntity le && !(e instanceof Player) && !le.equals(caster)
+                        && le.getLocation().distanceSquared(center) <= rSq) {
+                    result.add(le);
+                }
+            }
+        }
         return result;
+    }
+
+    /** Player-only message helper; silently no-ops for mob targets. */
+    private void tell(LivingEntity target, String message) {
+        if (target instanceof Player p) {
+            Msg.send(p, message);
+        }
     }
 
     // ------------------------------------------------------------------
@@ -166,8 +218,8 @@ public class AbilityManager {
             });
             pack.add(wolf);
         }
-        List<Player> enemies = nearbyEnemies(player, player.getLocation(), radius);
-        for (Player enemy : enemies) {
+        List<LivingEntity> enemies = nearbyTargets(player, player.getLocation(), radius);
+        for (LivingEntity enemy : enemies) {
             enemy.addPotionEffect(new PotionEffect(PotionEffectType.GLOWING, 20 * 20, 0, true, false));
         }
         if (!enemies.isEmpty() && !pack.isEmpty()) {
@@ -211,7 +263,7 @@ public class AbilityManager {
                 }
                 player.setVelocity(dir.clone().multiply(0.9).setY(player.getVelocity().getY() * 0.5));
                 player.getWorld().spawnParticle(Particle.CLOUD, player.getLocation(), 6, 0.2, 0.2, 0.2, 0.02);
-                for (Player hit : nearbyEnemies(player, player.getLocation(), 1.4)) {
+                for (LivingEntity hit : nearbyTargets(player, player.getLocation(), 1.4)) {
                     hit.damage(9.0, player); // 4.5 hearts
                     hit.setVelocity(dir.clone().multiply(2.0).setY(0.7)); // medium-high knockback
                     hit.getWorld().playSound(hit.getLocation(), Sound.ENTITY_IRON_GOLEM_ATTACK, 1f, 0.8f);
@@ -226,21 +278,21 @@ public class AbilityManager {
 
     /** T-Rex - Rend: 4 heart slash + bleed of half a heart per second for 10 seconds. */
     private boolean castTrex(Player player) {
-        Player target = getTargetPlayer(player, 5);
+        LivingEntity target = getTarget(player, 5);
         if (target == null) {
-            Msg.send(player, "<red>No target in range - look at a player within 5 blocks.</red>");
+            Msg.send(player, "<red>No target in range - look at a target within 5 blocks.</red>");
             return false;
         }
         target.damage(8.0, player); // 4 hearts
         player.playSound(player.getLocation(), Sound.ENTITY_PLAYER_ATTACK_SWEEP, 1f, 0.6f);
         player.getWorld().spawnParticle(Particle.SWEEP_ATTACK, target.getLocation().add(0, 1, 0), 3);
-        Msg.send(target, "<dark_red>You are bleeding! Half a heart per second for 10 seconds.</dark_red>");
+        tell(target, "<dark_red>You are bleeding! Half a heart per second for 10 seconds.</dark_red>");
         new BukkitRunnable() {
             int seconds = 0;
 
             @Override
             public void run() {
-                if (seconds++ >= 10 || !target.isOnline() || target.isDead()) {
+                if (seconds++ >= 10 || !target.isValid()) {
                     cancel();
                     return;
                 }
@@ -255,14 +307,14 @@ public class AbilityManager {
 
     /** Polar Bear - Deep Freeze: encase the target in an ice cube and stun for 3 seconds. */
     private boolean castPolarBear(Player player) {
-        Player target = getTargetPlayer(player, 6);
+        LivingEntity target = getTarget(player, 6);
         if (target == null) {
-            Msg.send(player, "<red>No target in range - look at a player within 6 blocks.</red>");
+            Msg.send(player, "<red>No target in range - look at a target within 6 blocks.</red>");
             return false;
         }
         stunManager.stun(target, 60);
         target.setFreezeTicks(target.getMaxFreezeTicks());
-        target.playSound(target.getLocation(), Sound.BLOCK_GLASS_PLACE, 1f, 0.6f);
+        target.getWorld().playSound(target.getLocation(), Sound.BLOCK_GLASS_PLACE, 1f, 0.6f);
 
         // Build a hollow ice shell around the target, restoring the old blocks after 3s.
         List<BlockState> replaced = new ArrayList<>();
@@ -291,21 +343,21 @@ public class AbilityManager {
                         state.update(true, false);
                     }
                 }
-                if (target.isOnline()) {
+                if (target.isValid()) {
                     stunManager.release(target);
                 }
             }
         }.runTaskLater(plugin, 60L);
         Msg.send(player, "<aqua>Deep Freeze!</aqua> <yellow>" + target.getName() + " is frozen for 3 seconds.</yellow>");
-        Msg.send(target, "<aqua>You have been frozen solid for 3 seconds!</aqua>");
+        tell(target, "<aqua>You have been frozen solid for 3 seconds!</aqua>");
         return true;
     }
 
     /** Snake - Venomous Bite: Poison II for 15 seconds. */
     private boolean castSnake(Player player) {
-        Player target = getTargetPlayer(player, 4);
+        LivingEntity target = getTarget(player, 4);
         if (target == null) {
-            Msg.send(player, "<red>No target in range - look at a player within 4 blocks.</red>");
+            Msg.send(player, "<red>No target in range - look at a target within 4 blocks.</red>");
             return false;
         }
         target.addPotionEffect(new PotionEffect(PotionEffectType.POISON, 15 * 20, 1, false, true));
@@ -313,26 +365,26 @@ public class AbilityManager {
         target.getWorld().spawnParticle(Particle.ITEM_SLIME, target.getLocation().add(0, 1, 0), 15, 0.3, 0.5, 0.3);
         Msg.send(player, "<green>Venomous Bite!</green> <yellow>" + target.getName()
                 + " is poisoned for 15 seconds.</yellow>");
-        Msg.send(target, "<green>You were bitten - Poison II for 15 seconds!</green>");
+        tell(target, "<green>You were bitten - Poison II for 15 seconds!</green>");
         return true;
     }
 
     /** Panther - Shadow Dance: 3 teleport slashes of 2.5 hearts; target stunned until it ends. */
     private boolean castPanther(Player player) {
-        Player target = getTargetPlayer(player, 8);
+        LivingEntity target = getTarget(player, 8);
         if (target == null) {
-            Msg.send(player, "<red>No target in range - look at a player within 8 blocks.</red>");
+            Msg.send(player, "<red>No target in range - look at a target within 8 blocks.</red>");
             return false;
         }
         stunManager.stun(target, 40); // stunned for the ~1.5s of slashes plus a beat
-        Msg.send(target, "<dark_purple>A panther dances around you - you are stunned!</dark_purple>");
+        tell(target, "<dark_purple>A panther dances around you - you are stunned!</dark_purple>");
         new BukkitRunnable() {
             int slash = 0;
 
             @Override
             public void run() {
-                if (slash >= 3 || !player.isOnline() || !target.isOnline() || target.isDead()) {
-                    if (target.isOnline() && !target.isDead()) {
+                if (slash >= 3 || !player.isOnline() || !target.isValid()) {
+                    if (target.isValid()) {
                         stunManager.release(target);
                     }
                     cancel();
@@ -384,7 +436,7 @@ public class AbilityManager {
                 center.getWorld().spawnParticle(Particle.BLOCK, center, 80, 2.5, 0.3, 2.5,
                         center.getBlock().getRelative(0, -1, 0).getBlockData());
                 center.getWorld().playSound(center, Sound.ENTITY_GENERIC_EXPLODE, 1f, 0.7f);
-                for (Player hit : nearbyEnemies(player, center, 5)) {
+                for (LivingEntity hit : nearbyTargets(player, center, 5)) {
                     hit.damage(8.0, player); // 4 hearts
                     Vector away = hit.getLocation().toVector().subtract(center.toVector()).setY(0);
                     if (away.lengthSquared() < 0.01) {
@@ -431,7 +483,7 @@ public class AbilityManager {
                             Location center = player.getLocation();
                             center.getWorld().spawnParticle(Particle.EXPLOSION_EMITTER, center, 3);
                             center.getWorld().playSound(center, Sound.ENTITY_ENDER_DRAGON_GROWL, 1f, 1.2f);
-                            for (Player hit : nearbyEnemies(player, center, 4)) {
+                            for (LivingEntity hit : nearbyTargets(player, center, 4)) {
                                 hit.damage(9.0, player); // 4.5 hearts
                                 Vector away = hit.getLocation().toVector().subtract(center.toVector()).setY(0);
                                 if (away.lengthSquared() < 0.01) {

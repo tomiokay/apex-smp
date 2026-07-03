@@ -89,9 +89,17 @@ public class RollTokenListener implements Listener {
 
     @EventHandler(ignoreCancelled = true)
     public void onDrop(PlayerDropItemEvent event) {
-        if (isRollToken(event.getItemDrop().getItemStack())) {
+        var dropped = event.getItemDrop().getItemStack();
+        if (isRollToken(dropped)) {
             event.setCancelled(true);
             Msg.send(event.getPlayer(), "<red>You cannot drop your Apex Roll Totem - right-click to roll!</red>");
+            return;
+        }
+        // Players at 0 absorbed tokens cannot throw away kill token items.
+        if (ItemManager.KILL_TOKEN.equals(plugin.getItemManager().identify(dropped))
+                && plugin.getApexManager().getData(event.getPlayer().getUniqueId()).getTokensConsumed() <= 0) {
+            event.setCancelled(true);
+            Msg.send(event.getPlayer(), "<red>You can't drop kill tokens while you have none absorbed.</red>");
         }
     }
 

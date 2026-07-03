@@ -10,8 +10,12 @@ commands:
     description: Use your apex ability (must be unlocked with 3 kill tokens).
     usage: /ability
   apex:
-    description: Apex SMP commands. Players - info, withdraw. Admins - start, panel, set, roll, tokens, lock, unlock, dragon, give, logs.
+    description: Apex SMP commands. Players - info, withdraw. Admins - start, panel, set, roll, tokens, lock, unlock, give, logs, test, track.
     usage: /apex help
+  cooldown:
+    description: Admin - reset ability cooldowns (self, a player, or all).
+    usage: /cooldown [player|all]
+    permission: apexsmp.admin
 
 permissions:
   apexsmp.admin:

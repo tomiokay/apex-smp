@@ -75,13 +75,8 @@ public class ItemUseListener implements Listener {
         ApexType result = (mustDiffer && current != null)
                 ? ApexType.randomRollableExcept(current)
                 : ApexType.randomRollable();
-        RollAnimation.play(plugin, player, result, rolled -> {
-            if (mustDiffer) {
-                // Rerolls and trades reset ability progress, as the item lore warns.
-                data.setTokensConsumed(0);
-                data.setAbilityUnlocked(false);
-            }
-            plugin.getApexManager().assignApex(player, rolled, reason);
-        });
+        // Token progress is intentionally preserved across rerolls and trades.
+        RollAnimation.play(plugin, player, result,
+                rolled -> plugin.getApexManager().assignApex(player, rolled, reason));
     }
 }

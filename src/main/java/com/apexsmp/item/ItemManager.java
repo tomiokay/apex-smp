@@ -47,7 +47,7 @@ public class ItemManager {
                 "<light_purple><bold>Apex Reroll</bold></light_purple>",
                 List.of("<gray>Right-click to reroll your apex</gray>",
                         "<gray>into a new random class.</gray>",
-                        "<red>Resets your ability progress!</red>"));
+                        "<green>Keeps your token progress.</green>"));
     }
 
     public ItemStack traderItem(int amount) {
@@ -55,7 +55,18 @@ public class ItemManager {
                 "<green><bold>Apex Trader</bold></green>",
                 List.of("<gray>Right-click to trade your apex</gray>",
                         "<gray>for a random different one.</gray>",
-                        "<red>Resets your ability progress!</red>"));
+                        "<green>Keeps your token progress.</green>"));
+    }
+
+    /** Counts kill token items across an array of stacks (nulls allowed). */
+    public int countKillTokens(ItemStack[] contents) {
+        int count = 0;
+        for (ItemStack stack : contents) {
+            if (stack != null && KILL_TOKEN.equals(identify(stack))) {
+                count += stack.getAmount();
+            }
+        }
+        return count;
     }
 
     /** Returns the apex item id on the stack, or null if it is not a custom item. */

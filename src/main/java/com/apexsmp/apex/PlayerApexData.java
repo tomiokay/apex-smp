@@ -2,8 +2,11 @@ package com.apexsmp.apex;
 
 public class PlayerApexData {
 
+    /** Everyone begins with 1 absorbed kill token; death resets this to 0. */
+    public static final int STARTING_TOKENS = 1;
+
     private ApexType apex;
-    private int tokensConsumed;
+    private int tokensConsumed = STARTING_TOKENS;
     private boolean abilityUnlocked;
     private int snakeHitCounter;
     private String lastKnownName = "";

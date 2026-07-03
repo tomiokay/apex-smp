@@ -7,9 +7,11 @@ import com.apexsmp.apex.ApexManager;
 import com.apexsmp.apex.ApexType;
 import com.apexsmp.command.AbilityCommand;
 import com.apexsmp.command.ApexCommand;
+import com.apexsmp.command.CooldownCommand;
 import com.apexsmp.item.ItemManager;
 import com.apexsmp.item.RecipeManager;
 import com.apexsmp.listener.CombatListener;
+import com.apexsmp.listener.DragonEggListener;
 import com.apexsmp.listener.ItemUseListener;
 import com.apexsmp.listener.PlayerListener;
 import com.apexsmp.listener.RollTokenListener;
@@ -55,6 +57,7 @@ public final class ApexPlugin extends JavaPlugin {
         getServer().getPluginManager().registerEvents(new PlayerListener(this), this);
         getServer().getPluginManager().registerEvents(new ItemUseListener(this), this);
         getServer().getPluginManager().registerEvents(rollTokenListener, this);
+        getServer().getPluginManager().registerEvents(new DragonEggListener(this), this);
         getServer().getPluginManager().registerEvents(adminPanel, this);
 
         registerCommand("ability", new AbilityCommand(this));
@@ -64,17 +67,31 @@ public final class ApexPlugin extends JavaPlugin {
             apex.setExecutor(executor);
             apex.setTabCompleter(executor);
         }
+        PluginCommand cooldown = getCommand("cooldown");
+        if (cooldown != null) {
+            CooldownCommand executor = new CooldownCommand(this);
+            cooldown.setExecutor(executor);
+            cooldown.setTabCompleter(executor);
+        }
 
-        // Polar Bear passive: Speed II while standing on snow or ice, checked twice a second.
+        // Per-player upkeep twice a second: Polar Bear snow/ice speed + dragon egg detection.
         getServer().getScheduler().runTaskTimer(this, () -> {
             for (Player player : getServer().getOnlinePlayers()) {
-                if (apexManager.getData(player.getUniqueId()).getApex() != ApexType.POLAR_BEAR) {
+                var data = apexManager.getData(player.getUniqueId());
+
+                // Anyone holding the dragon egg becomes the Dragon apex automatically.
+                if (data.getApex() != ApexType.DRAGON
+                        && player.getInventory().contains(Material.DRAGON_EGG)) {
+                    apexManager.assignApex(player, ApexType.DRAGON, "obtained the dragon egg");
                     continue;
                 }
-                Block below = player.getLocation().getBlock().getRelative(0, -1, 0);
-                Block at = player.getLocation().getBlock();
-                if (FROZEN_GROUND.contains(below.getType()) || FROZEN_GROUND.contains(at.getType())) {
-                    player.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, 15, 1, true, false));
+
+                if (data.getApex() == ApexType.POLAR_BEAR) {
+                    Block below = player.getLocation().getBlock().getRelative(0, -1, 0);
+                    Block at = player.getLocation().getBlock();
+                    if (FROZEN_GROUND.contains(below.getType()) || FROZEN_GROUND.contains(at.getType())) {
+                        player.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, 15, 1, true, false));
+                    }
                 }
             }
         }, 20L, 10L);

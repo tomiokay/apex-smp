@@ -25,7 +25,7 @@ public class ApexCommand implements TabExecutor {
 
     private static final List<String> PLAYER_SUBS = List.of("info", "withdraw", "help");
     private static final List<String> ADMIN_SUBS = List.of(
-            "start", "panel", "set", "roll", "tokens", "unlock", "lock", "dragon", "give", "logs");
+            "start", "panel", "set", "roll", "tokens", "unlock", "lock", "give", "logs", "test", "track");
 
     private final ApexPlugin plugin;
 
@@ -48,9 +48,10 @@ public class ApexCommand implements TabExecutor {
             case "tokens" -> requireAdmin(sender, admin, () -> tokens(sender, args));
             case "unlock" -> requireAdmin(sender, admin, () -> setLock(sender, args, true));
             case "lock" -> requireAdmin(sender, admin, () -> setLock(sender, args, false));
-            case "dragon" -> requireAdmin(sender, admin, () -> dragon(sender, args));
             case "give" -> requireAdmin(sender, admin, () -> give(sender, args));
             case "logs" -> requireAdmin(sender, admin, () -> logs(sender, args));
+            case "test" -> requireAdmin(sender, admin, () -> test(sender));
+            case "track" -> requireAdmin(sender, admin, () -> track(sender));
             default -> help(sender, admin);
         }
         return true;
@@ -240,28 +241,84 @@ public class ApexCommand implements TabExecutor {
         Msg.send(sender, "<green>Done.</green>");
     }
 
-    /** Dragon egg trade-in: the admin runs this while the target holds a dragon egg. */
-    private void dragon(CommandSender sender, String[] args) {
-        if (args.length < 2) {
-            Msg.send(sender, "<red>Usage: /apex dragon <player> - the player must hold a dragon egg.</red>");
+    /** Toggles ability test mode: abilities target mobs and skip lock + cooldown. */
+    private void test(CommandSender sender) {
+        if (!(sender instanceof Player player)) {
+            Msg.send(sender, "<red>Test mode is only available in game.</red>");
             return;
         }
-        Player target = Bukkit.getPlayer(args[1]);
-        if (target == null) {
-            Msg.send(sender, "<red>Player not found.</red>");
-            return;
+        boolean on = plugin.getAbilityManager().toggleTestMode(player);
+        plugin.getApexLogger().log(ApexLogger.LogType.ADMIN,
+                player.getName() + " turned test mode " + (on ? "ON" : "OFF"));
+        if (on) {
+            Msg.send(player, "<green>Test mode ON.</green> <gray>Abilities ignore the lock and "
+                    + "cooldown and can target mobs. Run /apex test again to turn off.</gray>");
+        } else {
+            Msg.send(player, "<yellow>Test mode OFF.</yellow>");
         }
-        if (target.getInventory().getItemInMainHand().getType() != org.bukkit.Material.DRAGON_EGG) {
-            Msg.send(sender, "<red>" + target.getName()
-                    + " must be holding the dragon egg to trade it in.</red>");
-            return;
+    }
+
+    /** Scans loaded areas for kill token items and reports where they are. */
+    private void track(CommandSender sender) {
+        List<String> found = new ArrayList<>();
+        int[] total = {0};
+
+        // Online players: inventory + ender chest.
+        for (Player online : Bukkit.getOnlinePlayers()) {
+            int inv = plugin.getItemManager().countKillTokens(online.getInventory().getContents());
+            int ender = plugin.getItemManager().countKillTokens(online.getEnderChest().getContents());
+            if (inv > 0) {
+                found.add("<white>" + inv + "</white> <gray>in</gray> <yellow>" + online.getName()
+                        + "</yellow><gray>'s inventory</gray>");
+                total[0] += inv;
+            }
+            if (ender > 0) {
+                found.add("<white>" + ender + "</white> <gray>in</gray> <yellow>" + online.getName()
+                        + "</yellow><gray>'s ender chest</gray>");
+                total[0] += ender;
+            }
         }
-        target.getInventory().getItemInMainHand().subtract(1);
-        plugin.getApexManager().assignApex(target, ApexType.DRAGON,
-                "dragon egg trade-in accepted by " + sender.getName());
-        plugin.getApexLogger().log(ApexLogger.LogType.ADMIN, sender.getName()
-                + " accepted " + target.getName() + "'s dragon egg trade-in");
-        Msg.send(sender, "<light_purple>" + target.getName() + " is now the Dragon Apex.</light_purple>");
+
+        // Loaded containers + dropped items across every world.
+        for (org.bukkit.World world : Bukkit.getWorlds()) {
+            for (org.bukkit.Chunk chunk : world.getLoadedChunks()) {
+                for (org.bukkit.block.BlockState state : chunk.getTileEntities()) {
+                    if (state instanceof org.bukkit.block.Container container) {
+                        int n = plugin.getItemManager().countKillTokens(container.getInventory().getContents());
+                        if (n > 0) {
+                            var loc = state.getLocation();
+                            found.add("<white>" + n + "</white> <gray>in a</gray> <aqua>"
+                                    + prettyType(state.getType().name()) + "</aqua> <gray>@ " + world.getName()
+                                    + " " + loc.getBlockX() + ", " + loc.getBlockY() + ", " + loc.getBlockZ() + "</gray>");
+                            total[0] += n;
+                        }
+                    }
+                }
+            }
+            for (org.bukkit.entity.Item drop : world.getEntitiesByClass(org.bukkit.entity.Item.class)) {
+                int n = plugin.getItemManager().countKillTokens(new org.bukkit.inventory.ItemStack[]{drop.getItemStack()});
+                if (n > 0) {
+                    var loc = drop.getLocation();
+                    found.add("<white>" + n + "</white> <gray>dropped @ " + world.getName() + " "
+                            + loc.getBlockX() + ", " + loc.getBlockY() + ", " + loc.getBlockZ() + "</gray>");
+                    total[0] += n;
+                }
+            }
+        }
+
+        Msg.sendRaw(sender, "<gold><bold>--- Kill Token Tracker ---</bold></gold>");
+        if (found.isEmpty()) {
+            Msg.sendRaw(sender, "<gray>No kill token items found in online inventories, ender chests, "
+                    + "loaded containers, or on the ground.</gray>");
+        } else {
+            found.forEach(line -> Msg.sendRaw(sender, "<gray>-</gray> " + line));
+            Msg.sendRaw(sender, "<yellow>Total tracked: <white>" + total[0] + "</white></yellow>");
+        }
+        Msg.sendRaw(sender, "<dark_gray>(Offline players and unloaded chunks are not scanned.)</dark_gray>");
+    }
+
+    private String prettyType(String enumName) {
+        return enumName.toLowerCase(Locale.ROOT).replace('_', ' ');
     }
 
     private void give(CommandSender sender, String[] args) {
@@ -337,9 +394,12 @@ public class ApexCommand implements TabExecutor {
             Msg.sendRaw(sender, "<yellow>/apex roll <player></yellow> <gray>- reroll a player</gray>");
             Msg.sendRaw(sender, "<yellow>/apex tokens <player> <n></yellow> <gray>- set consumed tokens</gray>");
             Msg.sendRaw(sender, "<yellow>/apex unlock|lock <player></yellow> <gray>- force ability state</gray>");
-            Msg.sendRaw(sender, "<yellow>/apex dragon <player></yellow> <gray>- accept a dragon egg trade-in</gray>");
             Msg.sendRaw(sender, "<yellow>/apex give <player> <item> [n]</yellow> <gray>- give apex items</gray>");
             Msg.sendRaw(sender, "<yellow>/apex logs [filter] [count]</yellow> <gray>- query the apex log</gray>");
+            Msg.sendRaw(sender, "<yellow>/apex test</yellow> <gray>- toggle ability test mode (mobs, no lock/cooldown)</gray>");
+            Msg.sendRaw(sender, "<yellow>/apex track</yellow> <gray>- find kill token items</gray>");
+            Msg.sendRaw(sender, "<yellow>/cooldown [player|all]</yellow> <gray>- reset ability cooldowns</gray>");
+            Msg.sendRaw(sender, "<gray>Dragon: whoever holds the dragon egg becomes the Dragon apex.</gray>");
         }
     }
 
@@ -357,7 +417,8 @@ public class ApexCommand implements TabExecutor {
             }
             return filter(subs, args[0]);
         }
-        if (args.length == 2 && !args[0].equalsIgnoreCase("withdraw") && !args[0].equalsIgnoreCase("logs")) {
+        if (args.length == 2 && List.of("set", "roll", "tokens", "unlock", "lock", "give", "info")
+                .contains(args[0].toLowerCase(Locale.ROOT))) {
             return filter(Bukkit.getOnlinePlayers().stream().map(Player::getName).toList(), args[1]);
         }
         if (args.length == 3 && args[0].equalsIgnoreCase("set")) {

@@ -69,6 +69,16 @@ public class CombatListener implements Listener {
     @EventHandler
     public void onPlayerKill(PlayerDeathEvent event) {
         Player victim = event.getPlayer();
+
+        // Any death wipes the victim's absorbed tokens back to zero.
+        PlayerApexData victimData = plugin.getApexManager().getData(victim.getUniqueId());
+        if (victimData.getTokensConsumed() > 0 || victimData.isAbilityUnlocked()) {
+            victimData.setTokensConsumed(0);
+            victimData.setAbilityUnlocked(false);
+            plugin.getApexManager().save();
+            Msg.send(victim, "<red>You died and lost all your absorbed kill tokens.</red>");
+        }
+
         Player killer = victim.getKiller();
         if (killer == null || killer.equals(victim)) {
             return;
