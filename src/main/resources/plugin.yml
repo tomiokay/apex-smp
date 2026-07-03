@@ -1,0 +1,22 @@
+name: ApexSMP
+version: 1.0.0
+main: com.apexsmp.ApexPlugin
+api-version: '1.21'
+description: Apex predator classes with kill-token ability progression.
+author: Athan
+
+commands:
+  ability:
+    description: Use your apex ability (must be unlocked with 3 kill tokens).
+    usage: /ability
+  apex:
+    description: Apex SMP commands. Players - info, withdraw. Admins - start, panel, set, roll, tokens, lock, unlock, dragon, give, logs.
+    usage: /apex help
+
+permissions:
+  apexsmp.admin:
+    description: Access to all admin apex commands, the admin panel, and logs.
+    default: op
+  apexsmp.use:
+    description: Access to /ability and player /apex subcommands.
+    default: true

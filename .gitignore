@@ -1,0 +1,12 @@
+# Build output
+build/
+.gradle/
+
+# Local agent coordination (machine-specific)
+.terminalx/
+.mcp.json
+
+# IDE
+.idea/
+*.iml
+.vscode/

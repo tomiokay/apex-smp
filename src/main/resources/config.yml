@@ -1,0 +1,13 @@
+# Apex SMP configuration
+
+# Seconds between ability uses.
+ability-cooldown-seconds: 45
+
+# Kill tokens that must be consumed to unlock your ability.
+tokens-to-unlock: 3
+
+# Seconds summoned wolves live before despawning.
+wolf-lifetime-seconds: 30
+
+# Radius (blocks) of the Wolf tracking pulse.
+wolf-tracking-radius: 30
