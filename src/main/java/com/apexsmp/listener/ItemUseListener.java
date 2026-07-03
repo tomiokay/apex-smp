@@ -43,8 +43,14 @@ public class ItemUseListener implements Listener {
         Player player = event.getPlayer();
         switch (id) {
             case ItemManager.KILL_TOKEN -> {
-                item.subtract(1);
-                plugin.getApexManager().consumeToken(player);
+                if (plugin.getApexManager().isAtTokenCap(player)) {
+                    Msg.send(player, "<red>You already have "
+                            + plugin.getApexManager().tokensToUnlock()
+                            + " absorbed tokens - you can't absorb any more.</red>");
+                } else {
+                    item.subtract(1);
+                    plugin.getApexManager().consumeToken(player);
+                }
             }
             case ItemManager.ROLL_ITEM -> {
                 item.subtract(1);

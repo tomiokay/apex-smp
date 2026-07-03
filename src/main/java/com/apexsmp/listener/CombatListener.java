@@ -73,10 +73,24 @@ public class CombatListener implements Listener {
         if (killer == null || killer.equals(victim)) {
             return;
         }
-        event.getDrops().add(plugin.getItemManager().killToken(1));
-        plugin.getApexLogger().log(ApexLogger.LogType.KILL,
-                killer.getName() + " killed " + victim.getName() + " - kill token dropped");
-        Msg.send(killer, "<red>" + victim.getName()
-                + "</red> <yellow>dropped a</yellow> <red>Kill Token</red><yellow>!</yellow>");
+        if (!plugin.getApexManager().isAtTokenCap(killer)) {
+            // Below the cap: auto-absorb the kill's token straight into progress.
+            plugin.getApexManager().consumeToken(killer);
+            plugin.getApexLogger().log(ApexLogger.LogType.KILL,
+                    killer.getName() + " killed " + victim.getName() + " - token auto-absorbed");
+            Msg.send(killer, "<red>" + victim.getName()
+                    + "</red> <yellow>was slain - kill token absorbed!</yellow>");
+        } else {
+            // At the cap: hand over a Kill Token item instead (drop if inventory full).
+            var leftover = killer.getInventory().addItem(plugin.getItemManager().killToken(1));
+            boolean dropped = !leftover.isEmpty();
+            leftover.values().forEach(left ->
+                    killer.getWorld().dropItemNaturally(killer.getLocation(), left));
+            plugin.getApexLogger().log(ApexLogger.LogType.KILL,
+                    killer.getName() + " killed " + victim.getName() + " - kill token "
+                            + (dropped ? "dropped (inventory full)" : "given"));
+            Msg.send(killer, "<red>" + victim.getName() + "</red> <yellow>was slain - kill token "
+                    + (dropped ? "dropped at your feet" : "added to your inventory") + "!</yellow>");
+        }
     }
 }

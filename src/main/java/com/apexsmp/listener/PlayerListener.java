@@ -3,7 +3,6 @@ package com.apexsmp.listener;
 import com.apexsmp.ApexPlugin;
 import com.apexsmp.apex.ApexType;
 import com.apexsmp.apex.PlayerApexData;
-import com.apexsmp.util.RollAnimation;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
@@ -14,7 +13,7 @@ import org.bukkit.event.player.PlayerRespawnEvent;
 import org.bukkit.event.player.PlayerToggleSneakEvent;
 
 /**
- * Join/quit/respawn lifecycle, the first-spawn roll, snake crouch speed,
+ * Join/quit/respawn lifecycle, passive reapplication, snake crouch speed,
  * and stun movement locking.
  */
 public class PlayerListener implements Listener {
@@ -30,15 +29,9 @@ public class PlayerListener implements Listener {
         Player player = event.getPlayer();
         PlayerApexData data = plugin.getApexManager().getData(player.getUniqueId());
         data.setLastKnownName(player.getName());
-        if (data.getApex() == null) {
-            // First spawn: roll an apex with the full animation after a short beat.
-            plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
-                if (player.isOnline()) {
-                    RollAnimation.play(plugin, player, ApexType.randomRollable(),
-                            result -> plugin.getApexManager().assignApex(player, result, "first spawn"));
-                }
-            }, 40L);
-        } else {
+        // No auto-roll on join. Passives apply once they have an apex; roll totems
+        // are handed out by RollTokenListener when the SMP has started.
+        if (data.getApex() != null) {
             plugin.getApexManager().applyPassives(player);
         }
     }

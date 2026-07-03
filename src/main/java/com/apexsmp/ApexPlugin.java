@@ -12,6 +12,7 @@ import com.apexsmp.item.RecipeManager;
 import com.apexsmp.listener.CombatListener;
 import com.apexsmp.listener.ItemUseListener;
 import com.apexsmp.listener.PlayerListener;
+import com.apexsmp.listener.RollTokenListener;
 import com.apexsmp.log.ApexLogger;
 import org.bukkit.Material;
 import org.bukkit.block.Block;
@@ -34,6 +35,7 @@ public final class ApexPlugin extends JavaPlugin {
     private AbilityManager abilityManager;
     private ItemManager itemManager;
     private AdminPanel adminPanel;
+    private RollTokenListener rollTokenListener;
 
     @Override
     public void onEnable() {
@@ -44,6 +46,7 @@ public final class ApexPlugin extends JavaPlugin {
         abilityManager = new AbilityManager(this, new StunManager());
         itemManager = new ItemManager(this);
         adminPanel = new AdminPanel(this);
+        rollTokenListener = new RollTokenListener(this);
 
         apexManager.load();
         new RecipeManager(this, itemManager).registerAll();
@@ -51,6 +54,7 @@ public final class ApexPlugin extends JavaPlugin {
         getServer().getPluginManager().registerEvents(new CombatListener(this), this);
         getServer().getPluginManager().registerEvents(new PlayerListener(this), this);
         getServer().getPluginManager().registerEvents(new ItemUseListener(this), this);
+        getServer().getPluginManager().registerEvents(rollTokenListener, this);
         getServer().getPluginManager().registerEvents(adminPanel, this);
 
         registerCommand("ability", new AbilityCommand(this));
@@ -120,5 +124,9 @@ public final class ApexPlugin extends JavaPlugin {
 
     public AdminPanel getAdminPanel() {
         return adminPanel;
+    }
+
+    public RollTokenListener getRollTokenListener() {
+        return rollTokenListener;
     }
 }

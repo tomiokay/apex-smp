@@ -29,6 +29,7 @@ public class ApexManager {
 
     private final ApexPlugin plugin;
     private final Map<UUID, PlayerApexData> players = new HashMap<>();
+    private boolean smpStarted;
 
     private final NamespacedKey maxHealthKey;
     private final NamespacedKey speedKey;
@@ -47,6 +48,14 @@ public class ApexManager {
 
     public Map<UUID, PlayerApexData> allData() {
         return players;
+    }
+
+    public boolean isSmpStarted() {
+        return smpStarted;
+    }
+
+    public void setSmpStarted(boolean smpStarted) {
+        this.smpStarted = smpStarted;
     }
 
     public int tokensToUnlock() {
@@ -171,9 +180,20 @@ public class ApexManager {
     // Token progression
     // ------------------------------------------------------------------
 
-    /** Consumes one claimed kill token; unlocks the ability at the threshold. */
-    public void consumeToken(Player player) {
+    /** True when the player is already at the consumed-token cap. */
+    public boolean isAtTokenCap(Player player) {
+        return getData(player.getUniqueId()).getTokensConsumed() >= tokensToUnlock();
+    }
+
+    /**
+     * Absorbs one kill token into the counter, capped at tokensToUnlock, unlocking
+     * the ability at the threshold. Returns false if already at the cap (nothing consumed).
+     */
+    public boolean consumeToken(Player player) {
         PlayerApexData data = getData(player.getUniqueId());
+        if (data.getTokensConsumed() >= tokensToUnlock()) {
+            return false;
+        }
         data.setTokensConsumed(data.getTokensConsumed() + 1);
         plugin.getApexLogger().log(ApexLogger.LogType.TOKEN_CLAIM,
                 player.getName() + " consumed a kill token (" + data.getTokensConsumed()
@@ -186,6 +206,7 @@ public class ApexManager {
                     + data.getTokensConsumed() + "/" + tokensToUnlock() + ")</gray>");
         }
         save();
+        return true;
     }
 
     /** Apex evolution - ability unlocked. */
@@ -236,6 +257,7 @@ public class ApexManager {
             return;
         }
         YamlConfiguration yaml = YamlConfiguration.loadConfiguration(file);
+        smpStarted = yaml.getBoolean("started", false);
         ConfigurationSection section = yaml.getConfigurationSection("players");
         if (section == null) {
             return;
@@ -259,6 +281,7 @@ public class ApexManager {
 
     public void save() {
         YamlConfiguration yaml = new YamlConfiguration();
+        yaml.set("started", smpStarted);
         for (Map.Entry<UUID, PlayerApexData> entry : players.entrySet()) {
             PlayerApexData data = entry.getValue();
             String base = "players." + entry.getKey() + ".";

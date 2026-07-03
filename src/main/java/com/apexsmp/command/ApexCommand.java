@@ -127,17 +127,20 @@ public class ApexCommand implements TabExecutor {
     // ------------------------------------------------------------------
 
     private void start(CommandSender sender) {
+        plugin.getApexManager().setSmpStarted(true);
+        plugin.getApexManager().save();
         int count = 0;
+        // Give a roll totem to everyone online who doesn't already have an apex.
         for (Player online : Bukkit.getOnlinePlayers()) {
-            online.getInventory().addItem(plugin.getItemManager().rollItem(1))
-                    .values().forEach(left -> online.getWorld().dropItemNaturally(online.getLocation(), left));
-            Msg.send(online, "<gold>The Apex SMP has begun!</gold> <yellow>Right-click your "
-                    + "Apex Roll Totem to roll your predator.</yellow>");
-            count++;
+            if (plugin.getApexManager().getData(online.getUniqueId()).getApex() == null) {
+                plugin.getRollTokenListener().ensureRollToken(online);
+                count++;
+            }
         }
         plugin.getApexLogger().log(ApexLogger.LogType.ADMIN,
-                sender.getName() + " ran /apex start - " + count + " roll totems handed out");
-        Msg.send(sender, "<green>Gave a roll totem to " + count + " players.</green>");
+                sender.getName() + " ran /apex start - SMP started, " + count + " roll totems handed out");
+        Msg.send(sender, "<green>Apex SMP started.</green> <gray>Gave a roll totem to " + count
+                + " players; future joiners get one automatically.</gray>");
     }
 
     private void panel(CommandSender sender) {
