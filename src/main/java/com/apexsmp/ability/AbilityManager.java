@@ -9,8 +9,6 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Particle;
 import org.bukkit.Sound;
-import org.bukkit.block.Block;
-import org.bukkit.block.BlockState;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
@@ -43,6 +41,7 @@ public class AbilityManager {
     private final Map<UUID, Long> lionBuffUntil = new HashMap<>();
     private final Set<UUID> noFallDamage = new HashSet<>();
     private final Set<UUID> testMode = new HashSet<>();
+    private final Map<UUID, Double> trueDamageMarks = new HashMap<>();
 
     public AbilityManager(ApexPlugin plugin, StunManager stunManager) {
         this.plugin = plugin;
@@ -61,6 +60,23 @@ public class AbilityManager {
     /** Consumed by the combat listener to cancel fall damage after slam abilities. */
     public boolean consumeNoFallDamage(Player player) {
         return noFallDamage.remove(player.getUniqueId());
+    }
+
+    /**
+     * Deals armor-piercing damage that still credits the attacker (for kill tokens),
+     * knockback, and the hurt animation. The exact final amount is enforced by the
+     * combat listener via {@link #consumeTrueDamageMark}.
+     */
+    private void dealTrueDamage(LivingEntity target, double amount, Player source) {
+        trueDamageMarks.put(target.getUniqueId(), amount);
+        target.damage(amount, source);
+        // Clear the mark if no damage event fired (e.g. target was invulnerable).
+        trueDamageMarks.remove(target.getUniqueId());
+    }
+
+    /** The combat listener calls this during the damage event to force true damage. */
+    public Double consumeTrueDamageMark(UUID uuid) {
+        return trueDamageMarks.remove(uuid);
     }
 
     /** Clears one player's ability cooldown. */
@@ -189,6 +205,24 @@ public class AbilityManager {
         }
     }
 
+    /** Draws a flat particle ring around a center point (for dramatic AoE flair). */
+    private void particleRing(Location center, Particle particle, double radius, int points, double y) {
+        for (int i = 0; i < points; i++) {
+            double angle = Math.PI * 2 * i / points;
+            Location p = center.clone().add(Math.cos(angle) * radius, y, Math.sin(angle) * radius);
+            center.getWorld().spawnParticle(particle, p, 1, 0, 0, 0, 0);
+        }
+    }
+
+    private void dustRing(Location center, org.bukkit.Color color, float size, double radius, int points, double y) {
+        Particle.DustOptions dust = new Particle.DustOptions(color, size);
+        for (int i = 0; i < points; i++) {
+            double angle = Math.PI * 2 * i / points;
+            Location p = center.clone().add(Math.cos(angle) * radius, y, Math.sin(angle) * radius);
+            center.getWorld().spawnParticle(Particle.DUST, p, 1, 0, 0, 0, 0, dust);
+        }
+    }
+
     // ------------------------------------------------------------------
     // Abilities
     // ------------------------------------------------------------------
@@ -196,9 +230,28 @@ public class AbilityManager {
     /** Lion - Blood Frenzy: +20% damage dealt for 10 seconds. */
     private boolean castLion(Player player) {
         lionBuffUntil.put(player.getUniqueId(), System.currentTimeMillis() + 10_000L);
-        player.playSound(player.getLocation(), Sound.ENTITY_RAVAGER_ROAR, 1f, 1.3f);
-        player.getWorld().spawnParticle(Particle.ANGRY_VILLAGER,
-                player.getLocation().add(0, 1.5, 0), 15, 0.5, 0.5, 0.5);
+        Location loc = player.getLocation();
+        player.getWorld().playSound(loc, Sound.ENTITY_RAVAGER_ROAR, 1.2f, 1.3f);
+        player.getWorld().playSound(loc, Sound.ITEM_TOTEM_USE, 0.7f, 1.4f);
+        player.getWorld().spawnParticle(Particle.ANGRY_VILLAGER, loc.clone().add(0, 1.5, 0), 15, 0.5, 0.5, 0.5);
+        player.getWorld().spawnParticle(Particle.FLAME, loc.clone().add(0, 1, 0), 50, 0.6, 0.9, 0.6, 0.06);
+        player.getWorld().spawnParticle(Particle.LAVA, loc, 12, 0.5, 0.3, 0.5);
+        dustRing(loc, org.bukkit.Color.fromRGB(255, 160, 0), 1.6f, 1.4, 24, 0.2);
+        // Lingering flame aura while the buff is active.
+        new BukkitRunnable() {
+            int t = 0;
+
+            @Override
+            public void run() {
+                if (t++ >= 20 || !player.isOnline() || !hasLionBuff(player)) {
+                    cancel();
+                    return;
+                }
+                dustRing(player.getLocation(), org.bukkit.Color.fromRGB(200, 40, 0), 1.2f, 0.9, 10, 1.0);
+                player.getWorld().spawnParticle(Particle.FLAME, player.getLocation().add(0, 1, 0),
+                        4, 0.4, 0.5, 0.4, 0.01);
+            }
+        }.runTaskTimer(plugin, 0L, 10L);
         Msg.send(player, "<gold>Blood Frenzy!</gold> <yellow>+20% damage for 10 seconds.</yellow>");
         return true;
     }
@@ -207,11 +260,17 @@ public class AbilityManager {
     private boolean castWolf(Player player) {
         int lifetime = plugin.getConfig().getInt("wolf-lifetime-seconds", 30);
         double radius = plugin.getConfig().getDouble("wolf-tracking-radius", 30);
+        Location origin = player.getLocation();
+        player.getWorld().spawnParticle(Particle.SONIC_BOOM, origin.clone().add(0, 1, 0), 1);
+        dustRing(origin, org.bukkit.Color.fromRGB(120, 120, 130), 1.5f, 2.0, 30, 0.1);
         List<Wolf> pack = new ArrayList<>();
         for (int i = 0; i < 5; i++) {
             double angle = Math.PI * 2 * i / 5;
-            Location spawn = player.getLocation().clone().add(Math.cos(angle) * 2, 0, Math.sin(angle) * 2);
-            Wolf wolf = player.getWorld().spawn(spawn, Wolf.class, w -> {
+            Location spawn = origin.clone().add(Math.cos(angle) * 2, 0, Math.sin(angle) * 2);
+            spawn.getWorld().spawnParticle(Particle.POOF, spawn.clone().add(0, 0.5, 0), 25, 0.3, 0.4, 0.3, 0.05);
+            spawn.getWorld().spawnParticle(Particle.CLOUD, spawn.clone().add(0, 0.3, 0), 15, 0.2, 0.2, 0.2, 0.03);
+            spawn.getWorld().playSound(spawn, Sound.ENTITY_WOLF_GROWL, 0.8f, 1.1f);
+            Wolf wolf = spawn.getWorld().spawn(spawn, Wolf.class, w -> {
                 w.setTamed(true);
                 w.setOwner(player);
                 w.setAdult();
@@ -246,6 +305,7 @@ public class AbilityManager {
     private boolean castRhino(Player player) {
         Vector dir = player.getLocation().getDirection().setY(0).normalize();
         player.playSound(player.getLocation(), Sound.ENTITY_RAVAGER_ATTACK, 1f, 0.7f);
+        player.playSound(player.getLocation(), Sound.ENTITY_RAVAGER_STEP, 1f, 0.6f);
         new BukkitRunnable() {
             final Location start = player.getLocation().clone();
             int ticks = 0;
@@ -262,11 +322,18 @@ public class AbilityManager {
                     return;
                 }
                 player.setVelocity(dir.clone().multiply(0.9).setY(player.getVelocity().getY() * 0.5));
-                player.getWorld().spawnParticle(Particle.CLOUD, player.getLocation(), 6, 0.2, 0.2, 0.2, 0.02);
+                Location trail = player.getLocation();
+                trail.getWorld().spawnParticle(Particle.CLOUD, trail, 10, 0.3, 0.2, 0.3, 0.03);
+                trail.getWorld().spawnParticle(Particle.BLOCK, trail, 12, 0.3, 0.1, 0.3,
+                        trail.getBlock().getRelative(0, -1, 0).getBlockData());
+                dustRing(trail, org.bukkit.Color.fromRGB(120, 90, 60), 1.4f, 0.8, 8, 0.1);
                 for (LivingEntity hit : nearbyTargets(player, player.getLocation(), 1.4)) {
-                    hit.damage(9.0, player); // 4.5 hearts
+                    dealTrueDamage(hit, 9.0, player); // true 4.5 hearts through armor
                     hit.setVelocity(dir.clone().multiply(2.0).setY(0.7)); // medium-high knockback
+                    Location impact = hit.getLocation().add(0, 1, 0);
                     hit.getWorld().playSound(hit.getLocation(), Sound.ENTITY_IRON_GOLEM_ATTACK, 1f, 0.8f);
+                    hit.getWorld().spawnParticle(Particle.EXPLOSION, impact, 2);
+                    hit.getWorld().spawnParticle(Particle.CRIT, impact, 25, 0.4, 0.4, 0.4, 0.6);
                     player.setVelocity(new Vector(0, 0, 0));
                     cancel();
                     return;
@@ -283,9 +350,15 @@ public class AbilityManager {
             Msg.send(player, "<red>No target in range - look at a target within 5 blocks.</red>");
             return false;
         }
-        target.damage(8.0, player); // 4 hearts
-        player.playSound(player.getLocation(), Sound.ENTITY_PLAYER_ATTACK_SWEEP, 1f, 0.6f);
-        player.getWorld().spawnParticle(Particle.SWEEP_ATTACK, target.getLocation().add(0, 1, 0), 3);
+        player.swingMainHand();
+        dealTrueDamage(target, 8.0, player); // true 4 hearts through armor
+        Location slashAt = target.getLocation().add(0, 1, 0);
+        player.getWorld().playSound(player.getLocation(), Sound.ENTITY_PLAYER_ATTACK_SWEEP, 1f, 0.6f);
+        player.getWorld().playSound(player.getLocation(), Sound.ENTITY_RAVAGER_ROAR, 0.8f, 1.5f);
+        player.getWorld().spawnParticle(Particle.SWEEP_ATTACK, slashAt, 5);
+        player.getWorld().spawnParticle(Particle.CRIT, slashAt, 30, 0.5, 0.5, 0.5, 0.6);
+        player.getWorld().spawnParticle(Particle.DUST, slashAt, 30, 0.5, 0.6, 0.5,
+                new Particle.DustOptions(org.bukkit.Color.fromRGB(140, 0, 0), 1.5f));
         tell(target, "<dark_red>You are bleeding! Half a heart per second for 10 seconds.</dark_red>");
         new BukkitRunnable() {
             int seconds = 0;
@@ -296,16 +369,22 @@ public class AbilityManager {
                     cancel();
                     return;
                 }
-                target.damage(1.0); // half a heart per second, ignores the attacker so no kill-credit spam
-                target.getWorld().spawnParticle(Particle.DAMAGE_INDICATOR,
-                        target.getLocation().add(0, 1, 0), 5, 0.3, 0.4, 0.3, 0.05);
+                dealTrueDamage(target, 1.0, player); // true half a heart per second through armor
+                Location b = target.getLocation().add(0, 1, 0);
+                target.getWorld().spawnParticle(Particle.DAMAGE_INDICATOR, b, 6, 0.3, 0.4, 0.3, 0.05);
+                target.getWorld().spawnParticle(Particle.DUST, target.getLocation().add(0, 0.3, 0),
+                        8, 0.3, 0.1, 0.3, new Particle.DustOptions(org.bukkit.Color.fromRGB(120, 0, 0), 1.2f));
             }
         }.runTaskTimer(plugin, 20L, 20L);
         Msg.send(player, "<dark_green>Rend!</dark_green> <yellow>" + target.getName() + " is bleeding.</yellow>");
         return true;
     }
 
-    /** Polar Bear - Deep Freeze: encase the target in an ice cube and stun for 3 seconds. */
+    /**
+     * Polar Bear - Deep Freeze: stun the target for 3 seconds inside a swirl of 3 spinning
+     * ice shards and blue frost. The freeze visual is applied, but the target can still
+     * right-click (eat golden apples, drink potions, heal) like every stun in this plugin.
+     */
     private boolean castPolarBear(Player player) {
         LivingEntity target = getTarget(player, 6);
         if (target == null) {
@@ -314,42 +393,70 @@ public class AbilityManager {
         }
         stunManager.stun(target, 60);
         target.setFreezeTicks(target.getMaxFreezeTicks());
-        target.getWorld().playSound(target.getLocation(), Sound.BLOCK_GLASS_PLACE, 1f, 0.6f);
+        Location loc = target.getLocation();
+        target.getWorld().playSound(loc, Sound.BLOCK_GLASS_PLACE, 1f, 0.6f);
+        target.getWorld().playSound(loc, Sound.BLOCK_POWDER_SNOW_PLACE, 1f, 0.8f);
+        target.getWorld().spawnParticle(Particle.BLOCK, loc.clone().add(0, 1, 0), 40, 0.4, 0.7, 0.4,
+                Material.BLUE_ICE.createBlockData());
 
-        // Build a hollow ice shell around the target, restoring the old blocks after 3s.
-        List<BlockState> replaced = new ArrayList<>();
-        Location feet = target.getLocation().getBlock().getLocation();
-        for (int dx = -1; dx <= 1; dx++) {
-            for (int dz = -1; dz <= 1; dz++) {
-                for (int dy = -1; dy <= 2; dy++) {
-                    boolean shell = Math.abs(dx) == 1 || Math.abs(dz) == 1 || dy == -1 || dy == 2;
-                    if (!shell) {
-                        continue;
-                    }
-                    Block block = feet.clone().add(dx, dy, dz).getBlock();
-                    if (block.getType().isAir() || block.isReplaceable()) {
-                        replaced.add(block.getState());
-                        block.setType(Material.PACKED_ICE);
-                    }
-                }
-            }
+        // Three little floating ice blocks that orbit the target.
+        final org.bukkit.entity.BlockDisplay[] shards = new org.bukkit.entity.BlockDisplay[3];
+        for (int i = 0; i < 3; i++) {
+            shards[i] = target.getWorld().spawn(loc, org.bukkit.entity.BlockDisplay.class, d -> {
+                d.setBlock(Material.BLUE_ICE.createBlockData());
+                d.setBrightness(new org.bukkit.entity.Display.Brightness(15, 15));
+                d.setTransformation(new org.bukkit.util.Transformation(
+                        new org.joml.Vector3f(-0.15f, -0.15f, -0.15f),
+                        new org.joml.AxisAngle4f(0, 0, 0, 1),
+                        new org.joml.Vector3f(0.3f, 0.3f, 0.3f),
+                        new org.joml.AxisAngle4f(0, 0, 0, 1)));
+            });
         }
+
         new BukkitRunnable() {
+            int t = 0;
+
             @Override
             public void run() {
-                for (BlockState state : replaced) {
-                    // Only restore if our ice is still there (avoid clobbering mined blocks).
-                    if (state.getBlock().getType() == Material.PACKED_ICE) {
-                        state.update(true, false);
+                if (t >= 60 || !target.isValid()) {
+                    for (org.bukkit.entity.BlockDisplay shard : shards) {
+                        if (shard != null && shard.isValid()) {
+                            shard.getWorld().spawnParticle(Particle.SNOWFLAKE, shard.getLocation(),
+                                    10, 0.2, 0.2, 0.2, 0.03);
+                            shard.remove();
+                        }
                     }
+                    if (target.isValid()) {
+                        stunManager.release(target);
+                    }
+                    cancel();
+                    return;
                 }
-                if (target.isValid()) {
-                    stunManager.release(target);
+                target.setFreezeTicks(target.getMaxFreezeTicks());
+                Location c = target.getLocation();
+                for (int i = 0; i < shards.length; i++) {
+                    double angle = t * 0.22 + Math.PI * 2 * i / shards.length;
+                    double y = 0.7 + Math.sin(t * 0.18 + i * 2.0) * 0.35;
+                    Location orbit = new Location(c.getWorld(),
+                            c.getX() + Math.cos(angle) * 1.1, c.getY() + y, c.getZ() + Math.sin(angle) * 1.1);
+                    if (shards[i] != null && shards[i].isValid()) {
+                        shards[i].teleport(orbit);
+                    }
+                    orbit.getWorld().spawnParticle(Particle.DUST, orbit, 3, 0.08, 0.08, 0.08,
+                            new Particle.DustOptions(org.bukkit.Color.fromRGB(130, 205, 255), 1.1f));
+                    orbit.getWorld().spawnParticle(Particle.SNOWFLAKE, orbit, 1, 0.05, 0.05, 0.05, 0.005);
                 }
+                // Blue frost ring swirling at the target's feet.
+                double ring = t * 0.32;
+                Location rp = c.clone().add(Math.cos(ring) * 0.9, 0.15, Math.sin(ring) * 0.9);
+                c.getWorld().spawnParticle(Particle.DUST, rp, 1, 0, 0, 0,
+                        new Particle.DustOptions(org.bukkit.Color.fromRGB(160, 225, 255), 1.3f));
+                t++;
             }
-        }.runTaskLater(plugin, 60L);
+        }.runTaskTimer(plugin, 1L, 1L);
+
         Msg.send(player, "<aqua>Deep Freeze!</aqua> <yellow>" + target.getName() + " is frozen for 3 seconds.</yellow>");
-        tell(target, "<aqua>You have been frozen solid for 3 seconds!</aqua>");
+        tell(target, "<aqua>You are frozen for 3 seconds - you can still eat and heal!</aqua>");
         return true;
     }
 
@@ -360,9 +467,15 @@ public class AbilityManager {
             Msg.send(player, "<red>No target in range - look at a target within 4 blocks.</red>");
             return false;
         }
+        player.swingMainHand();
         target.addPotionEffect(new PotionEffect(PotionEffectType.POISON, 15 * 20, 1, false, true));
-        player.playSound(player.getLocation(), Sound.ENTITY_SPIDER_HURT, 1f, 1.5f);
-        target.getWorld().spawnParticle(Particle.ITEM_SLIME, target.getLocation().add(0, 1, 0), 15, 0.3, 0.5, 0.3);
+        Location bite = target.getLocation().add(0, 1, 0);
+        player.getWorld().playSound(player.getLocation(), Sound.ENTITY_SPIDER_HURT, 1f, 1.5f);
+        player.getWorld().playSound(bite, Sound.ENTITY_PLAYER_ATTACK_CRIT, 1f, 1.3f);
+        target.getWorld().spawnParticle(Particle.ITEM_SLIME, bite, 30, 0.4, 0.6, 0.4, 0.05);
+        target.getWorld().spawnParticle(Particle.SNEEZE, bite, 20, 0.4, 0.5, 0.4, 0.05);
+        target.getWorld().spawnParticle(Particle.DUST, bite, 25, 0.4, 0.6, 0.4,
+                new Particle.DustOptions(org.bukkit.Color.fromRGB(60, 200, 30), 1.4f));
         Msg.send(player, "<green>Venomous Bite!</green> <yellow>" + target.getName()
                 + " is poisoned for 15 seconds.</yellow>");
         tell(target, "<green>You were bitten - Poison II for 15 seconds!</green>");
@@ -394,21 +507,37 @@ public class AbilityManager {
                 Location spot = target.getLocation().clone()
                         .add(Math.cos(angle) * 1.8, 0, Math.sin(angle) * 1.8);
                 spot.setDirection(target.getLocation().toVector().subtract(spot.toVector()));
+                // Trail of shadow between where the panther was and where it reappears.
+                player.getWorld().spawnParticle(Particle.SMOKE, player.getLocation().add(0, 1, 0),
+                        15, 0.2, 0.4, 0.2, 0.02);
                 player.teleport(spot);
-                target.damage(5.0, player); // 2.5 hearts per slash
-                player.getWorld().spawnParticle(Particle.SWEEP_ATTACK, target.getLocation().add(0, 1, 0), 2);
-                player.getWorld().spawnParticle(Particle.PORTAL, spot, 20, 0.3, 0.6, 0.3);
+                player.swingMainHand(); // actually swing the sword
+                target.setNoDamageTicks(0); // let every slash land through i-frames
+                dealTrueDamage(target, 5.0, player); // true 2.5 hearts through armor
+                Location mid = target.getLocation().add(0, 1, 0);
+                player.getWorld().spawnParticle(Particle.SWEEP_ATTACK, mid, 3);
+                player.getWorld().spawnParticle(Particle.CRIT, mid, 20, 0.4, 0.4, 0.4, 0.4);
+                player.getWorld().spawnParticle(Particle.DUST, mid, 25, 0.5, 0.6, 0.5,
+                        new Particle.DustOptions(org.bukkit.Color.fromRGB(80, 0, 120), 1.4f));
+                player.getWorld().spawnParticle(Particle.PORTAL, spot, 30, 0.3, 0.8, 0.3);
                 player.getWorld().playSound(spot, Sound.ENTITY_ENDERMAN_TELEPORT, 1f, 1.4f);
+                player.getWorld().playSound(mid, Sound.ENTITY_PLAYER_ATTACK_CRIT, 1f, 1.2f);
                 slash++;
             }
         }.runTaskTimer(plugin, 0L, 10L);
         return true;
     }
 
-    /** Hippo - Riverquake: leap 3 blocks up, slam for 4 hearts + huge knockback, 5 block radius. */
+    /** Hippo - Riverquake: leap up (keeping momentum), slam for 4 hearts + huge knockback, 5 block radius. */
     private boolean castHippo(Player player) {
-        player.setVelocity(new Vector(0, 0.95, 0)); // ~3 blocks of height
-        player.playSound(player.getLocation(), Sound.ENTITY_HOGLIN_ANGRY, 1f, 0.6f);
+        // Keep the player's current horizontal momentum (leap forward if moving) and
+        // launch ~4.5 blocks up (about 1.5 blocks higher than before).
+        Vector momentum = player.getVelocity();
+        player.setVelocity(new Vector(momentum.getX() * 1.5, 1.15, momentum.getZ() * 1.5));
+        Location launch = player.getLocation();
+        player.getWorld().playSound(launch, Sound.ENTITY_HOGLIN_ANGRY, 1f, 0.6f);
+        player.getWorld().spawnParticle(Particle.CLOUD, launch, 30, 0.4, 0.1, 0.4, 0.1);
+        player.getWorld().spawnParticle(Particle.SPLASH, launch, 40, 0.5, 0.2, 0.5, 0.1);
         noFallDamage.add(player.getUniqueId());
         new BukkitRunnable() {
             int ticks = 0;
@@ -420,8 +549,12 @@ public class AbilityManager {
                     cancel();
                     return;
                 }
-                if (!descending && ticks >= 8) {
-                    player.setVelocity(new Vector(0, -1.8, 0));
+                // Trail while airborne.
+                player.getWorld().spawnParticle(Particle.SPLASH, player.getLocation(), 6, 0.2, 0.2, 0.2, 0.02);
+                if (!descending && ticks >= 13) {
+                    // Slam straight down but keep the forward drift from the leap.
+                    Vector v = player.getVelocity();
+                    player.setVelocity(new Vector(v.getX(), -1.8, v.getZ()));
                     descending = true;
                 }
                 if (descending && player.isOnGround()) {
@@ -432,12 +565,19 @@ public class AbilityManager {
 
             private void slam() {
                 Location center = player.getLocation();
-                center.getWorld().spawnParticle(Particle.EXPLOSION_EMITTER, center, 2);
-                center.getWorld().spawnParticle(Particle.BLOCK, center, 80, 2.5, 0.3, 2.5,
+                center.getWorld().spawnParticle(Particle.EXPLOSION_EMITTER, center, 3);
+                center.getWorld().spawnParticle(Particle.BLOCK, center, 120, 3.0, 0.3, 3.0,
                         center.getBlock().getRelative(0, -1, 0).getBlockData());
+                center.getWorld().spawnParticle(Particle.SPLASH, center, 80, 3.0, 0.4, 3.0, 0.2);
                 center.getWorld().playSound(center, Sound.ENTITY_GENERIC_EXPLODE, 1f, 0.7f);
+                center.getWorld().playSound(center, Sound.ENTITY_PLAYER_ATTACK_CRIT, 1f, 0.6f);
+                // Expanding shockwave rings.
+                for (int r = 1; r <= 5; r++) {
+                    dustRing(center, org.bukkit.Color.fromRGB(90, 140, 200), 1.6f, r, 12 * r, 0.1);
+                    particleRing(center, Particle.CLOUD, r, 10 * r, 0.15);
+                }
                 for (LivingEntity hit : nearbyTargets(player, center, 5)) {
-                    hit.damage(8.0, player); // 4 hearts
+                    dealTrueDamage(hit, 8.0, player); // true 4 hearts through armor
                     Vector away = hit.getLocation().toVector().subtract(center.toVector()).setY(0);
                     if (away.lengthSquared() < 0.01) {
                         away = new Vector(1, 0, 0);
@@ -450,13 +590,32 @@ public class AbilityManager {
         return true;
     }
 
-    /** Dragon - Skyfall: 5 seconds of flight, then a ground slam for 4.5 hearts. */
+    /** Dragon - Skyfall: 2.5 seconds of flight, then a mace-like ground slam for a true 4 hearts. */
     private boolean castDragon(Player player) {
         boolean couldFly = player.getAllowFlight();
         player.setAllowFlight(true);
         player.setFlying(true);
         player.playSound(player.getLocation(), Sound.ENTITY_ENDER_DRAGON_FLAP, 1f, 1f);
-        Msg.send(player, "<light_purple>Skyfall!</light_purple> <yellow>5 seconds of flight, then you slam down.</yellow>");
+        player.playSound(player.getLocation(), Sound.ENTITY_ENDER_DRAGON_GROWL, 0.6f, 1.4f);
+        Msg.send(player, "<light_purple>Skyfall!</light_purple> <yellow>2.5 seconds of flight, then you slam down.</yellow>");
+        // Purple flight aura for the 2.5s airborne phase.
+        new BukkitRunnable() {
+            int t = 0;
+
+            @Override
+            public void run() {
+                if (t++ >= 50 || !player.isOnline() || player.isDead()) {
+                    cancel();
+                    return;
+                }
+                Location w = player.getLocation();
+                w.getWorld().spawnParticle(Particle.DRAGON_BREATH, w.clone().add(0, 0.2, 0), 8, 0.5, 0.2, 0.5, 0.01);
+                dustRing(w, org.bukkit.Color.fromRGB(170, 40, 220), 1.3f, 1.0, 8, 0.4);
+                if (t % 6 == 0) {
+                    w.getWorld().playSound(w, Sound.ENTITY_ENDER_DRAGON_FLAP, 0.6f, 1.1f);
+                }
+            }
+        }.runTaskTimer(plugin, 1L, 1L);
         new BukkitRunnable() {
             @Override
             public void run() {
@@ -469,6 +628,7 @@ public class AbilityManager {
                 }
                 noFallDamage.add(player.getUniqueId());
                 player.setVelocity(new Vector(0, -2.5, 0));
+                player.getWorld().playSound(player.getLocation(), Sound.ENTITY_ENDER_DRAGON_SHOOT, 1f, 0.8f);
                 new BukkitRunnable() {
                     int ticks = 0;
 
@@ -478,13 +638,21 @@ public class AbilityManager {
                             cancel();
                             return;
                         }
-                        player.getWorld().spawnParticle(Particle.DRAGON_BREATH, player.getLocation(), 10, 0.3, 0.3, 0.3, 0.02);
+                        Location w = player.getLocation();
+                        w.getWorld().spawnParticle(Particle.DRAGON_BREATH, w, 20, 0.3, 0.3, 0.3, 0.03);
+                        w.getWorld().spawnParticle(Particle.FLAME, w, 8, 0.2, 0.2, 0.2, 0.02);
                         if (player.isOnGround()) {
                             Location center = player.getLocation();
-                            center.getWorld().spawnParticle(Particle.EXPLOSION_EMITTER, center, 3);
+                            center.getWorld().spawnParticle(Particle.EXPLOSION_EMITTER, center, 4);
+                            center.getWorld().spawnParticle(Particle.DRAGON_BREATH, center, 120, 3.0, 0.4, 3.0, 0.15);
+                            center.getWorld().spawnParticle(Particle.FLAME, center, 80, 2.5, 0.3, 2.5, 0.1);
                             center.getWorld().playSound(center, Sound.ENTITY_ENDER_DRAGON_GROWL, 1f, 1.2f);
+                            center.getWorld().playSound(center, Sound.ENTITY_GENERIC_EXPLODE, 1f, 0.9f);
+                            for (int r = 1; r <= 4; r++) {
+                                dustRing(center, org.bukkit.Color.fromRGB(150, 30, 210), 1.7f, r, 12 * r, 0.1);
+                            }
                             for (LivingEntity hit : nearbyTargets(player, center, 4)) {
-                                hit.damage(9.0, player); // 4.5 hearts
+                                dealTrueDamage(hit, 8.0, player); // true 4 hearts, ignores armor
                                 Vector away = hit.getLocation().toVector().subtract(center.toVector()).setY(0);
                                 if (away.lengthSquared() < 0.01) {
                                     away = new Vector(1, 0, 0);
@@ -496,7 +664,7 @@ public class AbilityManager {
                     }
                 }.runTaskTimer(plugin, 1L, 1L);
             }
-        }.runTaskLater(plugin, 100L);
+        }.runTaskLater(plugin, 50L); // 2.5 seconds of flight
         return true;
     }
 }
