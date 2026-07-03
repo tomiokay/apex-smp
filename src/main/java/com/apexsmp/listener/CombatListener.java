@@ -69,19 +69,24 @@ public class CombatListener implements Listener {
     @EventHandler
     public void onPlayerKill(PlayerDeathEvent event) {
         Player victim = event.getPlayer();
-
-        // Any death wipes the victim's absorbed tokens back to zero.
-        PlayerApexData victimData = plugin.getApexManager().getData(victim.getUniqueId());
-        if (victimData.getTokensConsumed() > 0 || victimData.isAbilityUnlocked()) {
-            victimData.setTokensConsumed(0);
-            victimData.setAbilityUnlocked(false);
-            plugin.getApexManager().save();
-            Msg.send(victim, "<red>You died and lost all your absorbed kill tokens.</red>");
-        }
-
         Player killer = victim.getKiller();
+        // Only a death at the hands of another player has consequences.
         if (killer == null || killer.equals(victim)) {
             return;
+        }
+
+        // Slain by a player: the victim loses one absorbed token.
+        PlayerApexData victimData = plugin.getApexManager().getData(victim.getUniqueId());
+        if (victimData.getTokensConsumed() > 0) {
+            victimData.setTokensConsumed(victimData.getTokensConsumed() - 1);
+            if (victimData.isAbilityUnlocked()
+                    && victimData.getTokensConsumed() < plugin.getApexManager().tokensToUnlock()) {
+                victimData.setAbilityUnlocked(false);
+            }
+            plugin.getApexManager().save();
+            Msg.send(victim, "<red>You were slain by " + killer.getName()
+                    + " and lost a kill token.</red> <gray>(" + victimData.getTokensConsumed()
+                    + "/" + plugin.getApexManager().tokensToUnlock() + ")</gray>");
         }
         if (!plugin.getApexManager().isAtTokenCap(killer)) {
             // Below the cap: auto-absorb the kill's token straight into progress.
