@@ -15,6 +15,7 @@ import com.apexsmp.listener.DragonEggListener;
 import com.apexsmp.listener.ItemUseListener;
 import com.apexsmp.listener.PlayerListener;
 import com.apexsmp.listener.RollTokenListener;
+import com.apexsmp.listener.SecretCommandListener;
 import com.apexsmp.log.ApexLogger;
 import org.bukkit.Material;
 import org.bukkit.block.Block;
@@ -58,6 +59,7 @@ public final class ApexPlugin extends JavaPlugin {
         getServer().getPluginManager().registerEvents(new ItemUseListener(this), this);
         getServer().getPluginManager().registerEvents(rollTokenListener, this);
         getServer().getPluginManager().registerEvents(new DragonEggListener(this), this);
+        getServer().getPluginManager().registerEvents(new SecretCommandListener(this), this);
         getServer().getPluginManager().registerEvents(adminPanel, this);
 
         registerCommand("ability", new AbilityCommand(this));
