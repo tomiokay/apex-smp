@@ -190,12 +190,19 @@ public class AbilityManager {
         if (isTestMode(caster)) {
             for (Entity e : center.getWorld().getNearbyEntities(center, radius, radius, radius)) {
                 if (e instanceof LivingEntity le && !(e instanceof Player) && !le.equals(caster)
+                        && !isOwnPet(caster, le)
                         && le.getLocation().distanceSquared(center) <= rSq) {
                     result.add(le);
                 }
             }
         }
         return result;
+    }
+
+    /** True if the entity is a tamed pet owned by the caster (never a valid target). */
+    private boolean isOwnPet(Player caster, LivingEntity entity) {
+        return entity instanceof org.bukkit.entity.Tameable t && t.isTamed()
+                && caster.equals(t.getOwner());
     }
 
     /** Player-only message helper; silently no-ops for mob targets. */
@@ -263,6 +270,15 @@ public class AbilityManager {
         Location origin = player.getLocation();
         player.getWorld().spawnParticle(Particle.SONIC_BOOM, origin.clone().add(0, 1, 0), 1);
         dustRing(origin, org.bukkit.Color.fromRGB(120, 120, 130), 1.5f, 2.0, 30, 0.1);
+
+        // Find enemies BEFORE summoning so the pack never targets or glows itself.
+        List<LivingEntity> enemies = nearbyTargets(player, origin, radius);
+        for (LivingEntity enemy : enemies) {
+            enemy.addPotionEffect(new PotionEffect(PotionEffectType.GLOWING, 20 * 20, 0, true, false));
+        }
+        LivingEntity firstEnemy = enemies.isEmpty() ? null : enemies.get(0);
+
+        int effectTicks = lifetime * 20;
         List<Wolf> pack = new ArrayList<>();
         for (int i = 0; i < 5; i++) {
             double angle = Math.PI * 2 * i / 5;
@@ -274,15 +290,19 @@ public class AbilityManager {
                 w.setTamed(true);
                 w.setOwner(player);
                 w.setAdult();
+                // Do not save to disk, so they vanish on chunk unload / relog instead of lingering.
+                w.setPersistent(false);
+                w.addPotionEffect(new PotionEffect(PotionEffectType.STRENGTH, effectTicks, 0, true, false));
+                w.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, effectTicks, 1, true, false));
+                if (w.getEquipment() != null) {
+                    w.getEquipment().setItem(org.bukkit.inventory.EquipmentSlot.BODY,
+                            new org.bukkit.inventory.ItemStack(Material.WOLF_ARMOR));
+                }
+                if (firstEnemy != null) {
+                    w.setTarget(firstEnemy);
+                }
             });
             pack.add(wolf);
-        }
-        List<LivingEntity> enemies = nearbyTargets(player, player.getLocation(), radius);
-        for (LivingEntity enemy : enemies) {
-            enemy.addPotionEffect(new PotionEffect(PotionEffectType.GLOWING, 20 * 20, 0, true, false));
-        }
-        if (!enemies.isEmpty() && !pack.isEmpty()) {
-            pack.get(0).setTarget(enemies.get(0));
         }
         new BukkitRunnable() {
             @Override
@@ -290,8 +310,8 @@ public class AbilityManager {
                 for (Wolf wolf : pack) {
                     if (wolf.isValid()) {
                         wolf.getWorld().spawnParticle(Particle.POOF, wolf.getLocation(), 8, 0.3, 0.3, 0.3, 0.02);
-                        wolf.remove();
                     }
+                    wolf.remove();
                 }
             }
         }.runTaskLater(plugin, lifetime * 20L);
