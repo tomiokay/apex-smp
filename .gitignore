@@ -2,6 +2,9 @@
 build/
 .gradle/
 
+# Local test server
+test-server/
+
 # Local agent coordination (machine-specific)
 .terminalx/
 .mcp.json
