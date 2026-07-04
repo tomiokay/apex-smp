@@ -207,6 +207,11 @@ public class AbilityManager {
                 && caster.equals(t.getOwner());
     }
 
+    /** A location a wolf can occupy without suffocating (feet and head space are clear). */
+    private boolean isSafeSpawn(Location loc) {
+        return loc.getBlock().isPassable() && loc.clone().add(0, 1, 0).getBlock().isPassable();
+    }
+
     /** Player-only message helper; silently no-ops for mob targets. */
     private void tell(LivingEntity target, String message) {
         if (target instanceof Player p) {
@@ -420,6 +425,10 @@ public class AbilityManager {
         for (int i = 0; i < 5; i++) {
             double angle = Math.PI * 2 * i / 5;
             Location spawn = origin.clone().add(Math.cos(angle) * 2, 0, Math.sin(angle) * 2);
+            // If the ring position is inside a wall, fall back to the (always-safe) caster spot.
+            if (!isSafeSpawn(spawn)) {
+                spawn = origin.clone();
+            }
             spawn.getWorld().spawnParticle(Particle.POOF, spawn.clone().add(0, 0.5, 0), 25, 0.3, 0.4, 0.3, 0.05);
             spawn.getWorld().spawnParticle(Particle.CLOUD, spawn.clone().add(0, 0.3, 0), 15, 0.2, 0.2, 0.2, 0.03);
             spawn.getWorld().playSound(spawn, Sound.ENTITY_WOLF_GROWL, 0.8f, 1.1f);
@@ -626,12 +635,34 @@ public class AbilityManager {
         }
         player.swingMainHand();
         target.addPotionEffect(new PotionEffect(PotionEffectType.POISON, 15 * 20, 1, false, true));
-        Location feet = target.getLocation();
         player.getWorld().playSound(player.getLocation(), Sound.ENTITY_SPIDER_HURT, 1f, 1.5f);
-        player.getWorld().playSound(feet, Sound.ENTITY_PLAYER_ATTACK_CRIT, 1f, 1.3f);
-        // Twin venom coils spiral up around the victim, then a small burst at the bite.
-        helix(feet, org.bukkit.Color.fromRGB(60, 200, 30), 1.1f, 0.7, 2.2, 3, 22, 2);
-        target.getWorld().spawnParticle(Particle.ITEM_SLIME, feet.clone().add(0, 1, 0), 12, 0.3, 0.5, 0.3, 0.02);
+        player.getWorld().playSound(target.getLocation(), Sound.ENTITY_PLAYER_ATTACK_CRIT, 1f, 1.3f);
+        // Dense twin venom coils that wrap the victim and rotate for ~2 seconds.
+        final Particle.DustOptions venom = new Particle.DustOptions(org.bukkit.Color.fromRGB(60, 200, 30), 1.2f);
+        new BukkitRunnable() {
+            int t = 0;
+
+            @Override
+            public void run() {
+                if (t++ >= 40 || !target.isValid()) {
+                    cancel();
+                    return;
+                }
+                Location base = target.getLocation();
+                double spin = t * 0.35;
+                int points = 14;
+                for (int i = 0; i < points; i++) {
+                    double frac = i / (double) points;
+                    double y = frac * 2.1;
+                    for (int s = 0; s < 2; s++) {
+                        double a = spin + frac * Math.PI * 4 + s * Math.PI; // two strands, two turns
+                        Location p = base.clone().add(Math.cos(a) * 0.6, y, Math.sin(a) * 0.6);
+                        base.getWorld().spawnParticle(Particle.DUST, p, 1, 0, 0, 0, 0, venom);
+                    }
+                }
+            }
+        }.runTaskTimer(plugin, 0L, 1L);
+        target.getWorld().spawnParticle(Particle.ITEM_SLIME, target.getLocation().add(0, 1, 0), 12, 0.3, 0.5, 0.3, 0.02);
         Msg.send(player, "<green>Venomous Bite!</green> <yellow>" + target.getName()
                 + " is poisoned for 15 seconds.</yellow>");
         tell(target, "<green>You were bitten - Poison II for 15 seconds!</green>");
