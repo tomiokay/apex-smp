@@ -29,18 +29,6 @@ public class CombatListener implements Listener {
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onDamage(EntityDamageByEntityEvent event) {
-        // Armor-piercing true damage (e.g. dragon slam): force the exact final amount
-        // by zeroing every reduction modifier, so full Prot III diamond still takes it.
-        Double trueDamage = plugin.getAbilityManager().consumeTrueDamageMark(event.getEntity().getUniqueId());
-        if (trueDamage != null) {
-            for (EntityDamageEvent.DamageModifier modifier : EntityDamageEvent.DamageModifier.values()) {
-                if (modifier != EntityDamageEvent.DamageModifier.BASE && event.isApplicable(modifier)) {
-                    event.setDamage(modifier, 0.0);
-                }
-            }
-            event.setDamage(EntityDamageEvent.DamageModifier.BASE, trueDamage);
-            return;
-        }
         if (!(event.getDamager() instanceof Player attacker)) {
             return;
         }

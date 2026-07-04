@@ -41,7 +41,6 @@ public class AbilityManager {
     private final Map<UUID, Long> lionBuffUntil = new HashMap<>();
     private final Set<UUID> noFallDamage = new HashSet<>();
     private final Set<UUID> testMode = new HashSet<>();
-    private final Map<UUID, Double> trueDamageMarks = new HashMap<>();
 
     public AbilityManager(ApexPlugin plugin, StunManager stunManager) {
         this.plugin = plugin;
@@ -63,20 +62,23 @@ public class AbilityManager {
     }
 
     /**
-     * Deals armor-piercing damage that still credits the attacker (for kill tokens),
-     * knockback, and the hurt animation. The exact final amount is enforced by the
-     * combat listener via {@link #consumeTrueDamageMark}.
+     * Converts a desired final-damage figure (what a full Prot III diamond player
+     * should actually take) into the raw pre-mitigation damage to pass to damage().
+     *
+     * Full diamond = 20 armor, 8 toughness; Protection III on 4 pieces = 12 EPF.
+     * After-armor:  raw * (1 - (20 - raw/4)/25)
+     * After-prot:   * (1 - 12/25)  = * 0.52
+     * Solving final = 0.0052*raw^2 + 0.104*raw for raw gives the value below.
      */
-    private void dealTrueDamage(LivingEntity target, double amount, Player source) {
-        trueDamageMarks.put(target.getUniqueId(), amount);
-        target.damage(amount, source);
-        // Clear the mark if no damage event fired (e.g. target was invulnerable).
-        trueDamageMarks.remove(target.getUniqueId());
+    private double rawForProt3(double desiredFinal) {
+        double raw = (-0.104 + Math.sqrt(0.010816 + 0.0208 * desiredFinal)) / 0.0104;
+        return Math.max(desiredFinal, raw);
     }
 
-    /** The combat listener calls this during the damage event to force true damage. */
-    public Double consumeTrueDamageMark(UUID uuid) {
-        return trueDamageMarks.remove(uuid);
+    /** Deals damage calibrated so a full Prot III diamond player takes desiredFinal. */
+    private void dealCalibrated(LivingEntity target, double desiredFinal, Player source) {
+        target.setNoDamageTicks(0); // ensure the hit always lands
+        target.damage(rawForProt3(desiredFinal), source);
     }
 
     /** Clears one player's ability cooldown. */
@@ -348,7 +350,7 @@ public class AbilityManager {
                         trail.getBlock().getRelative(0, -1, 0).getBlockData());
                 dustRing(trail, org.bukkit.Color.fromRGB(120, 90, 60), 1.4f, 0.8, 8, 0.1);
                 for (LivingEntity hit : nearbyTargets(player, player.getLocation(), 1.4)) {
-                    dealTrueDamage(hit, 9.0, player); // true 4.5 hearts through armor
+                    dealCalibrated(hit, 9.0, player); // 4.5 hearts vs full Prot III diamond
                     hit.setVelocity(dir.clone().multiply(2.0).setY(0.7)); // medium-high knockback
                     Location impact = hit.getLocation().add(0, 1, 0);
                     hit.getWorld().playSound(hit.getLocation(), Sound.ENTITY_IRON_GOLEM_ATTACK, 1f, 0.8f);
@@ -371,7 +373,7 @@ public class AbilityManager {
             return false;
         }
         player.swingMainHand();
-        dealTrueDamage(target, 8.0, player); // true 4 hearts through armor
+        dealCalibrated(target, 8.0, player); // 4 hearts vs full Prot III diamond
         Location slashAt = target.getLocation().add(0, 1, 0);
         player.getWorld().playSound(player.getLocation(), Sound.ENTITY_PLAYER_ATTACK_SWEEP, 1f, 0.6f);
         player.getWorld().playSound(player.getLocation(), Sound.ENTITY_RAVAGER_ROAR, 0.8f, 1.5f);
@@ -389,7 +391,7 @@ public class AbilityManager {
                     cancel();
                     return;
                 }
-                dealTrueDamage(target, 1.0, player); // true half a heart per second through armor
+                dealCalibrated(target, 1.0, player); // 0.5 heart/s vs full Prot III diamond
                 Location b = target.getLocation().add(0, 1, 0);
                 target.getWorld().spawnParticle(Particle.DAMAGE_INDICATOR, b, 6, 0.3, 0.4, 0.3, 0.05);
                 target.getWorld().spawnParticle(Particle.DUST, target.getLocation().add(0, 0.3, 0),
@@ -533,7 +535,7 @@ public class AbilityManager {
                 player.teleport(spot);
                 player.swingMainHand(); // actually swing the sword
                 target.setNoDamageTicks(0); // let every slash land through i-frames
-                dealTrueDamage(target, 5.0, player); // true 2.5 hearts through armor
+                dealCalibrated(target, 5.0, player); // 2.5 hearts vs full Prot III diamond
                 Location mid = target.getLocation().add(0, 1, 0);
                 player.getWorld().spawnParticle(Particle.SWEEP_ATTACK, mid, 3);
                 player.getWorld().spawnParticle(Particle.CRIT, mid, 20, 0.4, 0.4, 0.4, 0.4);
@@ -550,10 +552,14 @@ public class AbilityManager {
 
     /** Hippo - Riverquake: leap up (keeping momentum), slam for 4 hearts + huge knockback, 5 block radius. */
     private boolean castHippo(Player player) {
-        // Keep the player's current horizontal momentum (leap forward if moving) and
-        // launch ~4.5 blocks up (about 1.5 blocks higher than before).
+        // Leap: carry (and amplify) current momentum plus a forward push in the look
+        // direction, so moving forward leaps further forward. Jump ~1 block lower than before.
         Vector momentum = player.getVelocity();
-        player.setVelocity(new Vector(momentum.getX() * 1.5, 1.15, momentum.getZ() * 1.5));
+        Vector forward = player.getLocation().getDirection().setY(0).normalize().multiply(0.55);
+        player.setVelocity(new Vector(
+                momentum.getX() * 1.7 + forward.getX(),
+                1.0,
+                momentum.getZ() * 1.7 + forward.getZ()));
         Location launch = player.getLocation();
         player.getWorld().playSound(launch, Sound.ENTITY_HOGLIN_ANGRY, 1f, 0.6f);
         player.getWorld().spawnParticle(Particle.CLOUD, launch, 30, 0.4, 0.1, 0.4, 0.1);
@@ -571,7 +577,7 @@ public class AbilityManager {
                 }
                 // Trail while airborne.
                 player.getWorld().spawnParticle(Particle.SPLASH, player.getLocation(), 6, 0.2, 0.2, 0.2, 0.02);
-                if (!descending && ticks >= 13) {
+                if (!descending && ticks >= 11) {
                     // Slam straight down but keep the forward drift from the leap.
                     Vector v = player.getVelocity();
                     player.setVelocity(new Vector(v.getX(), -1.8, v.getZ()));
@@ -597,12 +603,12 @@ public class AbilityManager {
                     particleRing(center, Particle.CLOUD, r, 10 * r, 0.15);
                 }
                 for (LivingEntity hit : nearbyTargets(player, center, 5)) {
-                    dealTrueDamage(hit, 8.0, player); // true 4 hearts through armor
+                    dealCalibrated(hit, 8.0, player); // 4 hearts vs full Prot III diamond
                     Vector away = hit.getLocation().toVector().subtract(center.toVector()).setY(0);
                     if (away.lengthSquared() < 0.01) {
                         away = new Vector(1, 0, 0);
                     }
-                    hit.setVelocity(away.normalize().multiply(2.6).setY(1.1)); // very high knockback
+                    hit.setVelocity(away.normalize().multiply(1.3).setY(0.55)); // halved knockback
                 }
             }
         }.runTaskTimer(plugin, 1L, 1L);
@@ -629,7 +635,7 @@ public class AbilityManager {
                     return;
                 }
                 Location w = player.getLocation();
-                w.getWorld().spawnParticle(Particle.DRAGON_BREATH, w.clone().add(0, 0.2, 0), 8, 0.5, 0.2, 0.5, 0.01);
+                w.getWorld().spawnParticle(Particle.WITCH, w.clone().add(0, 0.2, 0), 8, 0.5, 0.2, 0.5, 0.01);
                 dustRing(w, org.bukkit.Color.fromRGB(170, 40, 220), 1.3f, 1.0, 8, 0.4);
                 if (t % 6 == 0) {
                     w.getWorld().playSound(w, Sound.ENTITY_ENDER_DRAGON_FLAP, 0.6f, 1.1f);
@@ -659,12 +665,12 @@ public class AbilityManager {
                             return;
                         }
                         Location w = player.getLocation();
-                        w.getWorld().spawnParticle(Particle.DRAGON_BREATH, w, 20, 0.3, 0.3, 0.3, 0.03);
+                        w.getWorld().spawnParticle(Particle.WITCH, w, 20, 0.3, 0.3, 0.3, 0.03);
                         w.getWorld().spawnParticle(Particle.FLAME, w, 8, 0.2, 0.2, 0.2, 0.02);
                         if (player.isOnGround()) {
                             Location center = player.getLocation();
                             center.getWorld().spawnParticle(Particle.EXPLOSION_EMITTER, center, 4);
-                            center.getWorld().spawnParticle(Particle.DRAGON_BREATH, center, 120, 3.0, 0.4, 3.0, 0.15);
+                            center.getWorld().spawnParticle(Particle.WITCH, center, 120, 3.0, 0.4, 3.0, 0.15);
                             center.getWorld().spawnParticle(Particle.FLAME, center, 80, 2.5, 0.3, 2.5, 0.1);
                             center.getWorld().playSound(center, Sound.ENTITY_ENDER_DRAGON_GROWL, 1f, 1.2f);
                             center.getWorld().playSound(center, Sound.ENTITY_GENERIC_EXPLODE, 1f, 0.9f);
@@ -672,12 +678,12 @@ public class AbilityManager {
                                 dustRing(center, org.bukkit.Color.fromRGB(150, 30, 210), 1.7f, r, 12 * r, 0.1);
                             }
                             for (LivingEntity hit : nearbyTargets(player, center, 4)) {
-                                dealTrueDamage(hit, 8.0, player); // true 4 hearts, ignores armor
+                                dealCalibrated(hit, 8.0, player); // 4 hearts vs full Prot III diamond
                                 Vector away = hit.getLocation().toVector().subtract(center.toVector()).setY(0);
                                 if (away.lengthSquared() < 0.01) {
                                     away = new Vector(1, 0, 0);
                                 }
-                                hit.setVelocity(away.normalize().multiply(1.4).setY(0.8));
+                                hit.setVelocity(away.normalize().multiply(0.7).setY(0.4)); // halved knockback
                             }
                             cancel();
                         }
