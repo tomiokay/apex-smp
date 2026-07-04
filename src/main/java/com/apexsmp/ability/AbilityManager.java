@@ -233,6 +233,154 @@ public class AbilityManager {
     }
 
     // ------------------------------------------------------------------
+    // Reusable animated effect primitives (structured, not particle spam)
+    // ------------------------------------------------------------------
+
+    /**
+     * Spawns `count` small floating block-displays that orbit an entity for a duration,
+     * each trailing a colored dust so the whole thing reads as one crafted effect.
+     * Returns nothing; the displays clean themselves up.
+     */
+    private void orbitingBlocks(LivingEntity around, org.bukkit.block.data.BlockData block, int count,
+                                double radius, float scale, org.bukkit.Color trail, int durationTicks) {
+        final org.bukkit.entity.BlockDisplay[] shards = new org.bukkit.entity.BlockDisplay[count];
+        float offset = -scale / 2f;
+        for (int i = 0; i < count; i++) {
+            shards[i] = around.getWorld().spawn(around.getLocation(), org.bukkit.entity.BlockDisplay.class, d -> {
+                d.setBlock(block);
+                d.setBrightness(new org.bukkit.entity.Display.Brightness(15, 15));
+                d.setTransformation(new org.bukkit.util.Transformation(
+                        new org.joml.Vector3f(offset, offset, offset),
+                        new org.joml.AxisAngle4f(0, 0, 0, 1),
+                        new org.joml.Vector3f(scale, scale, scale),
+                        new org.joml.AxisAngle4f(0, 0, 0, 1)));
+            });
+        }
+        new BukkitRunnable() {
+            int t = 0;
+
+            @Override
+            public void run() {
+                if (t >= durationTicks || !around.isValid()) {
+                    for (org.bukkit.entity.BlockDisplay shard : shards) {
+                        if (shard != null && shard.isValid()) {
+                            shard.remove();
+                        }
+                    }
+                    cancel();
+                    return;
+                }
+                Location c = around.getLocation();
+                for (int i = 0; i < shards.length; i++) {
+                    double angle = t * 0.2 + Math.PI * 2 * i / shards.length;
+                    double y = 0.9 + Math.sin(t * 0.16 + i * 2.0) * 0.35;
+                    Location orbit = new Location(c.getWorld(),
+                            c.getX() + Math.cos(angle) * radius, c.getY() + y, c.getZ() + Math.sin(angle) * radius);
+                    if (shards[i] != null && shards[i].isValid()) {
+                        shards[i].teleport(orbit);
+                    }
+                    if (trail != null) {
+                        orbit.getWorld().spawnParticle(Particle.DUST, orbit, 2, 0.06, 0.06, 0.06,
+                                new Particle.DustOptions(trail, 1.0f));
+                    }
+                }
+                t++;
+            }
+        }.runTaskTimer(plugin, 1L, 1L);
+    }
+
+    /** A shockwave ring that grows outward from `center` over `duration` ticks. */
+    private void expandingRing(Location center, org.bukkit.Color color, float size,
+                               double maxRadius, int duration, Particle accent) {
+        new BukkitRunnable() {
+            int t = 0;
+
+            @Override
+            public void run() {
+                if (t > duration) {
+                    cancel();
+                    return;
+                }
+                double radius = maxRadius * (t / (double) duration);
+                int points = Math.max(10, (int) (radius * 10));
+                dustRing(center, color, size, radius, points, 0.2);
+                if (accent != null) {
+                    particleRing(center, accent, radius, Math.max(6, points / 2), 0.25);
+                }
+                t++;
+            }
+        }.runTaskTimer(plugin, 0L, 1L);
+    }
+
+    /** A rising helix of colored dust around a base point. */
+    private void helix(Location base, org.bukkit.Color color, float size, double radius,
+                       double height, double turns, int duration, int strands) {
+        new BukkitRunnable() {
+            int t = 0;
+
+            @Override
+            public void run() {
+                if (t > duration) {
+                    cancel();
+                    return;
+                }
+                double progress = t / (double) duration;
+                double y = height * progress;
+                double baseAngle = turns * 2 * Math.PI * progress;
+                Particle.DustOptions dust = new Particle.DustOptions(color, size);
+                for (int s = 0; s < strands; s++) {
+                    double a = baseAngle + Math.PI * 2 * s / strands;
+                    Location p = base.clone().add(Math.cos(a) * radius, y, Math.sin(a) * radius);
+                    base.getWorld().spawnParticle(Particle.DUST, p, 1, 0, 0, 0, 0, dust);
+                }
+                t++;
+            }
+        }.runTaskTimer(plugin, 0L, 1L);
+    }
+
+    /** A brief man-sized black-glass "shadow clone" that shrinks and vanishes. */
+    private void spawnShadowClone(Location at) {
+        org.bukkit.entity.BlockDisplay clone = at.getWorld().spawn(at.clone().add(-0.3, 0, -0.3),
+                org.bukkit.entity.BlockDisplay.class, d -> {
+                    d.setBlock(Material.BLACK_STAINED_GLASS.createBlockData());
+                    d.setBrightness(new org.bukkit.entity.Display.Brightness(0, 0));
+                    d.setGlowing(true);
+                    d.setGlowColorOverride(org.bukkit.Color.fromRGB(80, 0, 140));
+                    d.setTransformation(new org.bukkit.util.Transformation(
+                            new org.joml.Vector3f(0, 0, 0),
+                            new org.joml.AxisAngle4f(0, 0, 0, 1),
+                            new org.joml.Vector3f(0.6f, 1.8f, 0.6f),
+                            new org.joml.AxisAngle4f(0, 0, 0, 1)));
+                });
+        new BukkitRunnable() {
+            @Override
+            public void run() {
+                if (clone.isValid()) {
+                    clone.getWorld().spawnParticle(Particle.SMOKE, clone.getLocation().add(0.3, 0.9, 0.3),
+                            10, 0.2, 0.5, 0.2, 0.02);
+                    clone.remove();
+                }
+            }
+        }.runTaskLater(plugin, 6L);
+    }
+
+    /** Draws a crescent slash arc in front of the caster, facing their look direction. */
+    private void slashArc(Player caster, org.bukkit.Color color, float size, double radius) {
+        Location eye = caster.getEyeLocation();
+        Vector dir = eye.getDirection();
+        Vector right = new Vector(-dir.getZ(), 0, dir.getX()).normalize();
+        Vector up = new Vector(0, 1, 0);
+        Location origin = caster.getLocation().add(0, 1, 0).add(dir.clone().multiply(0.8));
+        Particle.DustOptions dust = new Particle.DustOptions(color, size);
+        for (int i = 0; i <= 16; i++) {
+            double a = Math.toRadians(-70 + (140.0 * i / 16));
+            Vector offset = right.clone().multiply(Math.sin(a) * radius).add(up.clone().multiply(Math.cos(a) * radius));
+            Location p = origin.clone().add(offset);
+            caster.getWorld().spawnParticle(Particle.DUST, p, 1, 0, 0, 0, 0, dust);
+        }
+    }
+
+    // ------------------------------------------------------------------
     // Abilities
     // ------------------------------------------------------------------
 
@@ -242,25 +390,10 @@ public class AbilityManager {
         Location loc = player.getLocation();
         player.getWorld().playSound(loc, Sound.ENTITY_RAVAGER_ROAR, 1.2f, 1.3f);
         player.getWorld().playSound(loc, Sound.ITEM_TOTEM_USE, 0.7f, 1.4f);
-        player.getWorld().spawnParticle(Particle.ANGRY_VILLAGER, loc.clone().add(0, 1.5, 0), 15, 0.5, 0.5, 0.5);
-        player.getWorld().spawnParticle(Particle.FLAME, loc.clone().add(0, 1, 0), 50, 0.6, 0.9, 0.6, 0.06);
-        player.getWorld().spawnParticle(Particle.LAVA, loc, 12, 0.5, 0.3, 0.5);
-        dustRing(loc, org.bukkit.Color.fromRGB(255, 160, 0), 1.6f, 1.4, 24, 0.2);
-        // Lingering flame aura while the buff is active.
-        new BukkitRunnable() {
-            int t = 0;
-
-            @Override
-            public void run() {
-                if (t++ >= 20 || !player.isOnline() || !hasLionBuff(player)) {
-                    cancel();
-                    return;
-                }
-                dustRing(player.getLocation(), org.bukkit.Color.fromRGB(200, 40, 0), 1.2f, 0.9, 10, 1.0);
-                player.getWorld().spawnParticle(Particle.FLAME, player.getLocation().add(0, 1, 0),
-                        4, 0.4, 0.5, 0.4, 0.01);
-            }
-        }.runTaskTimer(plugin, 0L, 10L);
+        // A single fiery shockwave, then three molten cores orbit the lion for the buff.
+        expandingRing(loc, org.bukkit.Color.fromRGB(255, 150, 0), 1.6f, 3.0, 12, Particle.FLAME);
+        orbitingBlocks(player, Material.MAGMA_BLOCK.createBlockData(), 3, 1.1, 0.35f,
+                org.bukkit.Color.fromRGB(255, 90, 0), 10 * 20);
         Msg.send(player, "<gold>Blood Frenzy!</gold> <yellow>+20% damage for 10 seconds.</yellow>");
         return true;
     }
@@ -270,8 +403,10 @@ public class AbilityManager {
         int lifetime = plugin.getConfig().getInt("wolf-lifetime-seconds", 30);
         double radius = plugin.getConfig().getDouble("wolf-tracking-radius", 30);
         Location origin = player.getLocation();
+        // A resonant howl: sonic ring + an expanding grey shockwave.
         player.getWorld().spawnParticle(Particle.SONIC_BOOM, origin.clone().add(0, 1, 0), 1);
-        dustRing(origin, org.bukkit.Color.fromRGB(120, 120, 130), 1.5f, 2.0, 30, 0.1);
+        player.getWorld().playSound(origin, Sound.ENTITY_WOLF_GROWL, 1.2f, 0.7f);
+        expandingRing(origin, org.bukkit.Color.fromRGB(150, 150, 160), 1.5f, 6.0, 12, null);
 
         // Find enemies BEFORE summoning so the pack never targets or glows itself.
         List<LivingEntity> enemies = nearbyTargets(player, origin, radius);
@@ -352,10 +487,11 @@ public class AbilityManager {
                 for (LivingEntity hit : nearbyTargets(player, player.getLocation(), 1.4)) {
                     dealCalibrated(hit, 9.0, player); // 4.5 hearts vs full Prot III diamond
                     hit.setVelocity(dir.clone().multiply(2.0).setY(0.7)); // medium-high knockback
-                    Location impact = hit.getLocation().add(0, 1, 0);
-                    hit.getWorld().playSound(hit.getLocation(), Sound.ENTITY_IRON_GOLEM_ATTACK, 1f, 0.8f);
-                    hit.getWorld().spawnParticle(Particle.EXPLOSION, impact, 2);
-                    hit.getWorld().spawnParticle(Particle.CRIT, impact, 25, 0.4, 0.4, 0.4, 0.6);
+                    Location impact = hit.getLocation();
+                    hit.getWorld().playSound(impact, Sound.ENTITY_IRON_GOLEM_ATTACK, 1f, 0.8f);
+                    hit.getWorld().spawnParticle(Particle.EXPLOSION, impact.clone().add(0, 1, 0), 1);
+                    // Ground-crack shockwave from the gore point.
+                    expandingRing(impact, org.bukkit.Color.fromRGB(120, 90, 60), 1.6f, 3.0, 8, Particle.CRIT);
                     player.setVelocity(new Vector(0, 0, 0));
                     cancel();
                     return;
@@ -377,10 +513,9 @@ public class AbilityManager {
         Location slashAt = target.getLocation().add(0, 1, 0);
         player.getWorld().playSound(player.getLocation(), Sound.ENTITY_PLAYER_ATTACK_SWEEP, 1f, 0.6f);
         player.getWorld().playSound(player.getLocation(), Sound.ENTITY_RAVAGER_ROAR, 0.8f, 1.5f);
-        player.getWorld().spawnParticle(Particle.SWEEP_ATTACK, slashAt, 5);
-        player.getWorld().spawnParticle(Particle.CRIT, slashAt, 30, 0.5, 0.5, 0.5, 0.6);
-        player.getWorld().spawnParticle(Particle.DUST, slashAt, 30, 0.5, 0.6, 0.5,
-                new Particle.DustOptions(org.bukkit.Color.fromRGB(140, 0, 0), 1.5f));
+        // Two crossing crimson claw arcs instead of a particle blob.
+        slashArc(player, org.bukkit.Color.fromRGB(170, 0, 0), 1.4f, 1.3);
+        player.getWorld().spawnParticle(Particle.SWEEP_ATTACK, slashAt, 2);
         tell(target, "<dark_red>You are bleeding! Half a heart per second for 10 seconds.</dark_red>");
         new BukkitRunnable() {
             int seconds = 0;
@@ -491,13 +626,12 @@ public class AbilityManager {
         }
         player.swingMainHand();
         target.addPotionEffect(new PotionEffect(PotionEffectType.POISON, 15 * 20, 1, false, true));
-        Location bite = target.getLocation().add(0, 1, 0);
+        Location feet = target.getLocation();
         player.getWorld().playSound(player.getLocation(), Sound.ENTITY_SPIDER_HURT, 1f, 1.5f);
-        player.getWorld().playSound(bite, Sound.ENTITY_PLAYER_ATTACK_CRIT, 1f, 1.3f);
-        target.getWorld().spawnParticle(Particle.ITEM_SLIME, bite, 30, 0.4, 0.6, 0.4, 0.05);
-        target.getWorld().spawnParticle(Particle.SNEEZE, bite, 20, 0.4, 0.5, 0.4, 0.05);
-        target.getWorld().spawnParticle(Particle.DUST, bite, 25, 0.4, 0.6, 0.4,
-                new Particle.DustOptions(org.bukkit.Color.fromRGB(60, 200, 30), 1.4f));
+        player.getWorld().playSound(feet, Sound.ENTITY_PLAYER_ATTACK_CRIT, 1f, 1.3f);
+        // Twin venom coils spiral up around the victim, then a small burst at the bite.
+        helix(feet, org.bukkit.Color.fromRGB(60, 200, 30), 1.1f, 0.7, 2.2, 3, 22, 2);
+        target.getWorld().spawnParticle(Particle.ITEM_SLIME, feet.clone().add(0, 1, 0), 12, 0.3, 0.5, 0.3, 0.02);
         Msg.send(player, "<green>Venomous Bite!</green> <yellow>" + target.getName()
                 + " is poisoned for 15 seconds.</yellow>");
         tell(target, "<green>You were bitten - Poison II for 15 seconds!</green>");
@@ -529,21 +663,18 @@ public class AbilityManager {
                 Location spot = target.getLocation().clone()
                         .add(Math.cos(angle) * 1.8, 0, Math.sin(angle) * 1.8);
                 spot.setDirection(target.getLocation().toVector().subtract(spot.toVector()));
-                // Trail of shadow between where the panther was and where it reappears.
-                player.getWorld().spawnParticle(Particle.SMOKE, player.getLocation().add(0, 1, 0),
-                        15, 0.2, 0.4, 0.2, 0.02);
+                // Leave a fading shadow clone (black glass) where the panther just was.
+                spawnShadowClone(player.getLocation());
                 player.teleport(spot);
-                player.swingMainHand(); // actually swing the sword
+                player.swingMainHand();
                 target.setNoDamageTicks(0); // let every slash land through i-frames
                 dealCalibrated(target, 5.0, player); // 2.5 hearts vs full Prot III diamond
-                Location mid = target.getLocation().add(0, 1, 0);
-                player.getWorld().spawnParticle(Particle.SWEEP_ATTACK, mid, 3);
-                player.getWorld().spawnParticle(Particle.CRIT, mid, 20, 0.4, 0.4, 0.4, 0.4);
-                player.getWorld().spawnParticle(Particle.DUST, mid, 25, 0.5, 0.6, 0.5,
-                        new Particle.DustOptions(org.bukkit.Color.fromRGB(80, 0, 120), 1.4f));
-                player.getWorld().spawnParticle(Particle.PORTAL, spot, 30, 0.3, 0.8, 0.3);
+                // A purple claw arc across the target.
+                slashArc(player, org.bukkit.Color.fromRGB(120, 0, 180), 1.3f, 1.2);
+                player.getWorld().spawnParticle(Particle.SWEEP_ATTACK, target.getLocation().add(0, 1, 0), 2);
+                player.getWorld().spawnParticle(Particle.PORTAL, spot, 20, 0.3, 0.8, 0.3);
                 player.getWorld().playSound(spot, Sound.ENTITY_ENDERMAN_TELEPORT, 1f, 1.4f);
-                player.getWorld().playSound(mid, Sound.ENTITY_PLAYER_ATTACK_CRIT, 1f, 1.2f);
+                player.getWorld().playSound(target.getLocation(), Sound.ENTITY_PLAYER_ATTACK_CRIT, 1f, 1.2f);
                 slash++;
             }
         }.runTaskTimer(plugin, 0L, 10L);
@@ -591,17 +722,12 @@ public class AbilityManager {
 
             private void slam() {
                 Location center = player.getLocation();
-                center.getWorld().spawnParticle(Particle.EXPLOSION_EMITTER, center, 3);
-                center.getWorld().spawnParticle(Particle.BLOCK, center, 120, 3.0, 0.3, 3.0,
-                        center.getBlock().getRelative(0, -1, 0).getBlockData());
-                center.getWorld().spawnParticle(Particle.SPLASH, center, 80, 3.0, 0.4, 3.0, 0.2);
+                center.getWorld().spawnParticle(Particle.EXPLOSION_EMITTER, center, 1);
                 center.getWorld().playSound(center, Sound.ENTITY_GENERIC_EXPLODE, 1f, 0.7f);
                 center.getWorld().playSound(center, Sound.ENTITY_PLAYER_ATTACK_CRIT, 1f, 0.6f);
-                // Expanding shockwave rings.
-                for (int r = 1; r <= 5; r++) {
-                    dustRing(center, org.bukkit.Color.fromRGB(90, 140, 200), 1.6f, r, 12 * r, 0.1);
-                    particleRing(center, Particle.CLOUD, r, 10 * r, 0.15);
-                }
+                // One clean water shockwave rolling out to the 5-block edge, plus a geyser column.
+                expandingRing(center, org.bukkit.Color.fromRGB(90, 150, 210), 1.7f, 5.0, 12, Particle.SPLASH);
+                helix(center, org.bukkit.Color.fromRGB(120, 180, 230), 1.4f, 0.5, 2.5, 2, 12, 3);
                 for (LivingEntity hit : nearbyTargets(player, center, 5)) {
                     dealCalibrated(hit, 8.0, player); // 4 hearts vs full Prot III diamond
                     Vector away = hit.getLocation().toVector().subtract(center.toVector()).setY(0);
@@ -664,19 +790,24 @@ public class AbilityManager {
                             cancel();
                             return;
                         }
+                        // Spiralling comet trail as the dragon plummets.
                         Location w = player.getLocation();
-                        w.getWorld().spawnParticle(Particle.WITCH, w, 20, 0.3, 0.3, 0.3, 0.03);
-                        w.getWorld().spawnParticle(Particle.FLAME, w, 8, 0.2, 0.2, 0.2, 0.02);
+                        double spin = ticks * 0.9;
+                        for (int s = 0; s < 2; s++) {
+                            double a = spin + Math.PI * s;
+                            Location p = w.clone().add(Math.cos(a) * 0.7, 0.4, Math.sin(a) * 0.7);
+                            w.getWorld().spawnParticle(Particle.DUST, p, 1, 0, 0, 0, 0,
+                                    new Particle.DustOptions(org.bukkit.Color.fromRGB(170, 40, 220), 1.3f));
+                            w.getWorld().spawnParticle(Particle.FLAME, p, 1, 0, 0, 0, 0.01);
+                        }
                         if (player.isOnGround()) {
                             Location center = player.getLocation();
-                            center.getWorld().spawnParticle(Particle.EXPLOSION_EMITTER, center, 4);
-                            center.getWorld().spawnParticle(Particle.WITCH, center, 120, 3.0, 0.4, 3.0, 0.15);
-                            center.getWorld().spawnParticle(Particle.FLAME, center, 80, 2.5, 0.3, 2.5, 0.1);
+                            center.getWorld().spawnParticle(Particle.EXPLOSION_EMITTER, center, 2);
                             center.getWorld().playSound(center, Sound.ENTITY_ENDER_DRAGON_GROWL, 1f, 1.2f);
                             center.getWorld().playSound(center, Sound.ENTITY_GENERIC_EXPLODE, 1f, 0.9f);
-                            for (int r = 1; r <= 4; r++) {
-                                dustRing(center, org.bukkit.Color.fromRGB(150, 30, 210), 1.7f, r, 12 * r, 0.1);
-                            }
+                            // Purple shockwave rolling out + a burst of dragonfire up the middle.
+                            expandingRing(center, org.bukkit.Color.fromRGB(160, 30, 210), 1.8f, 4.0, 12, Particle.FLAME);
+                            helix(center, org.bukkit.Color.fromRGB(190, 60, 230), 1.4f, 0.6, 2.5, 2, 12, 3);
                             for (LivingEntity hit : nearbyTargets(player, center, 4)) {
                                 dealCalibrated(hit, 8.0, player); // 4 hearts vs full Prot III diamond
                                 Vector away = hit.getLocation().toVector().subtract(center.toVector()).setY(0);
